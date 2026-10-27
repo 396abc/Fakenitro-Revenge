@@ -30,8 +30,6 @@ Everything can be turned on and off in the plugin's settings, same options as th
 
 ### Things that don't work
 
-- **Animated stickers (APNG)** get sent as a still `.png` link. Vencord turns them into a GIF first, but that needs a canvas which Discord's mobile app doesn't have.
-- **Lottie stickers** can't be faked at all, you'll get a popup if you try. Same as on Vencord.
 - **The "This is a FakeNitro emoji" note** that Vencord adds when you tap a fake emoji isn't there.
 - Reactions and statuses can't use fake emojis, since there's nowhere to put a link.
 
