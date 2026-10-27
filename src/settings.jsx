@@ -1,26 +1,20 @@
 // Settings page. Same options as the Vencord plugin, built with Discord's own mobile components.
+import { getComponents } from './components'
 import { DEFAULTS, MEDIA_SIZES, React, ReactNative, storage } from './shared'
 
 const { ScrollView } = ReactNative
 const { useProxy } = vendetta.storage
-const {
-	Stack,
-	TableRowGroup,
-	TableSwitchRow,
-	TableRadioGroup,
-	TableRadioRow,
-	TableRow,
-	TextInput,
-} = bunny.metro.common.components
 const { getAssetIDByName } = vendetta.ui.assets
 
 // Skip the icon if Discord renamed or removed the asset
 function Icon({ name }) {
+	const { TableRowIcon } = getComponents()
 	const id = getAssetIDByName(name)
-	return id ? <TableRow.Icon source={id} /> : null
+	return id && TableRowIcon ? <TableRowIcon source={id} /> : null
 }
 
 function Switch({ setting, label, subLabel, icon }) {
+	const { TableSwitchRow } = getComponents()
 	return (
 		<TableSwitchRow
 			label={label}
@@ -34,6 +28,7 @@ function Switch({ setting, label, subLabel, icon }) {
 
 // Radio rows only take string values, so sizes are stored as numbers and converted here
 function SizePicker({ setting, title }) {
+	const { TableRadioGroup, TableRadioRow } = getComponents()
 	return (
 		<TableRadioGroup
 			title={title}
@@ -49,6 +44,7 @@ function SizePicker({ setting, title }) {
 
 export default function Settings() {
 	useProxy(storage)
+	const { Stack, TableRowGroup, TextInput } = getComponents()
 
 	return (
 		<ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 64 }}>

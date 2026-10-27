@@ -1,12 +1,13 @@
 // Popups shown while sending.
+import { getComponents } from './components'
 import { React, storage } from './shared'
 
-const { AlertModal, AlertActionButton, AlertActions } = bunny.metro.common.components
 const { openAlert } = bunny.ui.alerts
 
 const { useEffect, useRef } = React
 
 function CannotEmbedNotice({ resolve }) {
+	const { AlertModal, AlertActionButton, AlertActions } = getComponents()
 	const settled = useRef(false)
 	const done = value => {
 		if (settled.current) return
@@ -51,6 +52,7 @@ export function showCannotEmbedNotice() {
 }
 
 export function showUnsupportedStickerNotice() {
+	const { AlertModal, AlertActionButton, AlertActions } = getComponents()
 	openAlert(
 		'fake-nitro-unsupported-sticker',
 		<AlertModal

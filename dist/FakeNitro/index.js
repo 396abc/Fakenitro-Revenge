@@ -227,11 +227,39 @@
     });
   }
 
+  // src/components.js
+  var cache;
+  function unwrap(value) {
+    var _a, _b, _c;
+    const factory = (_c = (_b = (_a = bunny.utils) == null ? void 0 : _a.lazy) == null ? void 0 : _b.getProxyFactory) == null ? void 0 : _c.call(_b, value);
+    return factory ? factory() : value;
+  }
+  function getComponents() {
+    if (cache) return cache;
+    const all = bunny.metro.common.components;
+    cache = {};
+    for (const name of [
+      "Stack",
+      "TableRowGroup",
+      "TableSwitchRow",
+      "TableRadioGroup",
+      "TableRadioRow",
+      "TableRowIcon",
+      "TextInput",
+      "AlertModal",
+      "AlertActionButton",
+      "AlertActions"
+    ]) {
+      cache[name] = unwrap(all[name]);
+    }
+    return cache;
+  }
+
   // src/alerts.jsx
-  var { AlertModal, AlertActionButton, AlertActions } = bunny.metro.common.components;
   var { openAlert } = bunny.ui.alerts;
   var { useEffect, useRef } = React;
   function CannotEmbedNotice({ resolve }) {
+    const { AlertModal, AlertActionButton, AlertActions } = getComponents();
     const settled = useRef(false);
     const done = (value) => {
       if (settled.current) return;
@@ -264,6 +292,7 @@
     });
   }
   function showUnsupportedStickerNotice() {
+    const { AlertModal, AlertActionButton, AlertActions } = getComponents();
     openAlert(
       "fake-nitro-unsupported-sticker",
       /* @__PURE__ */ React.createElement(
@@ -737,21 +766,14 @@
   // src/settings.jsx
   var { ScrollView } = ReactNative;
   var { useProxy } = vendetta.storage;
-  var {
-    Stack,
-    TableRowGroup,
-    TableSwitchRow,
-    TableRadioGroup,
-    TableRadioRow,
-    TableRow,
-    TextInput
-  } = bunny.metro.common.components;
   var { getAssetIDByName } = vendetta.ui.assets;
   function Icon({ name }) {
+    const { TableRowIcon } = getComponents();
     const id = getAssetIDByName(name);
-    return id ? /* @__PURE__ */ React.createElement(TableRow.Icon, { source: id }) : null;
+    return id && TableRowIcon ? /* @__PURE__ */ React.createElement(TableRowIcon, { source: id }) : null;
   }
   function Switch({ setting, label, subLabel, icon }) {
+    const { TableSwitchRow } = getComponents();
     return /* @__PURE__ */ React.createElement(
       TableSwitchRow,
       {
@@ -765,6 +787,7 @@
   }
   function SizePicker({ setting, title }) {
     var _a;
+    const { TableRadioGroup, TableRadioRow } = getComponents();
     return /* @__PURE__ */ React.createElement(
       TableRadioGroup,
       {
@@ -777,6 +800,7 @@
   }
   function Settings() {
     useProxy(storage);
+    const { Stack, TableRowGroup, TextInput } = getComponents();
     return /* @__PURE__ */ React.createElement(ScrollView, { style: { flex: 1 }, contentContainerStyle: { padding: 16, paddingBottom: 64 } }, /* @__PURE__ */ React.createElement(Stack, { spacing: 24 }, /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Emojis" }, /* @__PURE__ */ React.createElement(
       Switch,
       {

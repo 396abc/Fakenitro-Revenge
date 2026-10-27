@@ -137,18 +137,44 @@ const mk = name => {
 }
 const TableRow = mk('TableRow')
 TableRow.Icon = mk('TableRowIcon')
-const components = {
+// Revenge wraps components in lazy proxies with a function as the target, same as here.
+// That's what broke the settings page when a component turned out to be a forwardRef object.
+const lazyFactories = new WeakMap()
+function proxyLazy(factory) {
+	const dummy = function () {}
+	const handler = {}
+	for (const name of Object.getOwnPropertyNames(Reflect)) {
+		handler[name] = (_, ...args) => Reflect[name](factory(), ...args)
+	}
+	handler.getOwnPropertyDescriptor = (target, p) =>
+		['arguments', 'caller', 'prototype'].includes(p)
+			? Reflect.getOwnPropertyDescriptor(target, p)
+			: Reflect.getOwnPropertyDescriptor(factory(), p)
+	handler.ownKeys = () => [...new Set([...Reflect.ownKeys(factory()), 'arguments', 'caller', 'prototype'])]
+	const proxy = new Proxy(dummy, handler)
+	lazyFactories.set(proxy, factory)
+	return proxy
+}
+
+const TextInput = React.forwardRef((props, ref) => React.createElement('TextInput', props))
+TextInput.displayName = 'TextInput'
+const TableRowIcon = mk('TableRowIcon')
+
+const realComponents = {
 	Stack: mk('Stack'),
 	TableRowGroup: mk('TableRowGroup'),
 	TableSwitchRow: mk('TableSwitchRow'),
 	TableRadioGroup: mk('TableRadioGroup'),
 	TableRadioRow: mk('TableRadioRow'),
 	TableRow,
-	TextInput: mk('TextInput'),
+	TableRowIcon,
+	TextInput,
 	AlertModal: Object.assign(props => React.createElement('AlertModal', null, props.actions), { displayName: 'AlertModal' }),
 	AlertActionButton: mk('AlertActionButton'),
 	AlertActions: mk('AlertActions'),
 }
+const components = {}
+for (const k in realComponents) components[k] = proxyLazy(() => realComponents[k])
 
 // Plugin storage, behaves like Revenge's
 const store = {}
@@ -185,6 +211,7 @@ const vendetta = {
 global.bunny = {
 	metro: { findByFilePath: (p) => byPath[p], common: { components } },
 	ui: { alerts: { openAlert: (key, el) => { lastAlert = { key, el } } } },
+	utils: { lazy: { getProxyFactory: p => lazyFactories.get(p) } },
 	api: { flux: { intercept: cb => { intercepts.push(cb); return () => intercepts.splice(intercepts.indexOf(cb), 1) } } },
 }
 
