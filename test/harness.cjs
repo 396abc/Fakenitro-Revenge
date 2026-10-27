@@ -265,17 +265,26 @@ const EMOJI = id => {
 	await test('emoji picker clears disabled sets only for chat picker', () => {
 		const props = intention => ({ emojiPickerIntention: intention, categories: [{ emojisDisabled: new Set(['x']), isNitroLocked: true }] })
 		const chat = props(EmojiIntention.CHAT)
-		EmojiPickerListModule.default.type(chat)
-		assert.strictEqual(chat.categories[0].emojisDisabled.size, 0)
-		assert.strictEqual(chat.categories[0].isNitroLocked, false)
+		const out = EmojiPickerListModule.default.type(chat)
+		assert.strictEqual(out.categories[0].emojisDisabled.size, 0)
+		assert.strictEqual(out.categories[0].isNitroLocked, false)
+		// Discord's own objects are left alone
+		assert.strictEqual(chat.categories[0].emojisDisabled.size, 1)
+		assert.strictEqual(chat.categories[0].isNitroLocked, true)
+		// Same input gives the same array back, so the list doesn't redraw every render
+		assert.strictEqual(EmojiPickerListModule.default.type(chat).categories, out.categories)
 		const react = props(EmojiIntention.REACTION)
-		EmojiPickerListModule.default.type(react)
-		assert.strictEqual(react.categories[0].emojisDisabled.size, 1)
+		const out2 = EmojiPickerListModule.default.type(react)
+		assert.strictEqual(out2.categories[0].emojisDisabled.size, 1)
 	})
 
-	await test('sticker picker marks stickers available', () => {
-		const out = StickerPickerListRowModule.default({ stickers: [{ id: 's1', available: false }] })
+	await test('sticker picker marks stickers available without touching originals', () => {
+		const props = { stickers: [{ id: 's1', available: false }, { id: 's2', available: true }] }
+		const out = StickerPickerListRowModule.default(props)
 		assert.strictEqual(out.stickers[0].available, true)
+		assert.strictEqual(props.stickers[0].available, false)
+		assert.strictEqual(out.stickers[1], props.stickers[1])
+		assert.strictEqual(StickerPickerListRowModule.default(props).stickers[0], out.stickers[0])
 	})
 
 	await test('send: locked emoji -> hyperlink, usable emoji kept, word boundaries', async () => {

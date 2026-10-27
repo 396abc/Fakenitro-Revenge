@@ -177,20 +177,35 @@ function patchEmojiPicker() {
 	// The export is wrapped in React.memo, so the real component is on .type
 	const target = mod.default.type ? mod.default : mod
 	const key = mod.default.type ? 'type' : 'default'
-	const empty = new Set()
+
+	// Discord caches and reuses these category objects, so we hand the picker unlocked copies
+	// instead of editing the originals. The copies are cached too, so the picker gets the same
+	// array back each render and doesn't redraw for no reason.
+	const unlockedCategory = new WeakMap()
+	const unlockedList = new WeakMap()
+
+	const unlockCategory = cat => {
+		if (!cat || !('emojisDisabled' in cat)) return cat
+		let copy = unlockedCategory.get(cat)
+		if (!copy) {
+			copy = Object.assign({}, cat, { emojisDisabled: new Set(), isNitroLocked: false })
+			unlockedCategory.set(cat, copy)
+		}
+		return copy
+	}
 
 	addUnpatch(
 		before(key, target, args => {
 			const props = args[0]
-			if (!storage.enableEmojiBypass || !props) return
+			if (!storage.enableEmojiBypass || !props || !Array.isArray(props.categories)) return
 			if (!allowedIntentions.has(props.emojiPickerIntention)) return
 
-			for (const cat of props.categories || []) {
-				if (cat && 'emojisDisabled' in cat) {
-					cat.emojisDisabled = empty
-					cat.isNitroLocked = false
-				}
+			let categories = unlockedList.get(props.categories)
+			if (!categories) {
+				categories = props.categories.map(unlockCategory)
+				unlockedList.set(props.categories, categories)
 			}
+			return [Object.assign({}, props, { categories }), ...args.slice(1)]
 		}),
 	)
 }
@@ -199,11 +214,25 @@ function patchStickerPicker() {
 	const mod = findPath('modules/stickers/native/StickerPickerListRow.tsx')
 	if (!mod?.default) throw new Error('StickerPickerListRow not found')
 
+	// Same idea as the emoji picker: cached copies, never touch Discord's objects
+	const unlocked = new WeakMap()
+	const unlockSticker = s => {
+		if (!s || typeof s !== 'object' || s.available !== false) return s
+		let copy = unlocked.get(s)
+		if (!copy) {
+			copy = Object.assign({}, s, { available: true })
+			unlocked.set(s, copy)
+		}
+		return copy
+	}
+
 	addUnpatch(
 		before('default', mod, args => {
 			const props = args[0]
 			if (!storage.enableStickerBypass || !Array.isArray(props?.stickers)) return
-			props.stickers = props.stickers.map(s => Object.assign({}, s, { available: true }))
+			if (!props.stickers.some(s => s && s.available === false)) return
+			const stickers = props.stickers.map(unlockSticker)
+			return [Object.assign({}, props, { stickers }), ...args.slice(1)]
 		}),
 	)
 }
