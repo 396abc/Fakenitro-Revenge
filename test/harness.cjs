@@ -1,5 +1,6 @@
-// Simulates the classic Revenge plugin environment + the Discord mobile modules the plugin touches,
-// then evaluates dist/FakeNitro/index.js exactly like VdPluginManager.evalPlugin does.
+// Fakes Revenge and the Discord modules the plugin uses, then loads dist/FakeNitro/index.js
+// the same way Revenge does and checks every feature. Run with `npm test` after `npm run build`.
+// Set DEBUG=1 to print each test as it runs.
 const fs = require('fs')
 const path = require('path')
 const assert = require('assert')
@@ -16,7 +17,7 @@ function test(name, fn) {
 		.catch(e => { if (process.env.DEBUG) console.log('FAIL', name, e && e.stack); results.push(['FAIL', name, e && e.stack]) })
 }
 
-// ---------- Fake Discord ----------
+// Fake Discord modules
 const EmojiIntention = { REACTION: 0, STATUS: 1, COMMUNITY_CONTENT: 2, CHAT: 3, GUILD_STICKER_RELATED_EMOJI: 4, AUTO_SUGGESTION: 9 }
 const CURRENT_GUILD = 'g1'
 
@@ -117,7 +118,7 @@ const byPath = {
 	'modules/stickers/native/StickerPickerListRow.tsx': StickerPickerListRowModule,
 }
 
-// ---------- Flux ----------
+// Flux dispatcher
 const intercepts = []
 const dispatched = []
 const FluxDispatcher = {
@@ -127,7 +128,7 @@ const FluxDispatcher = {
 	},
 }
 
-// ---------- UI mocks ----------
+// UI components (just render their props)
 let lastAlert = null
 const mk = name => {
 	const C = props => React.createElement(name, props, props.children)
@@ -149,7 +150,7 @@ const components = {
 	AlertActions: mk('AlertActions'),
 }
 
-// ---------- Storage (proxy + useProxy like Vendetta) ----------
+// Plugin storage, behaves like Revenge's
 const store = {}
 function useProxy() {
 	const [, force] = React.useState(0)
@@ -160,7 +161,7 @@ function useProxy() {
 }
 const listeners = new Set()
 const storage = new Proxy(store, {
-	set(t, k, v) { if (v === null) new Proxy(v, {}); t[k] = v; listeners.forEach(f => f(x => x + 1)); return true },
+	set(t, k, v) { if (v === null) throw new TypeError('Revenge storage crashes on null'); t[k] = v; listeners.forEach(f => f(x => x + 1)); return true },
 })
 
 const logs = []
@@ -187,7 +188,7 @@ global.bunny = {
 	api: { flux: { intercept: cb => { intercepts.push(cb); return () => intercepts.splice(intercepts.indexOf(cb), 1) } } },
 }
 
-// ---------- Load plugin exactly like VdPluginManager.evalPlugin ----------
+// Load the plugin like Revenge does
 const js = fs.readFileSync(path.join(__dirname, '../dist/FakeNitro/index.js'), 'utf8')
 const raw = (0, eval)(`vendetta=>{return ${js}}`)(vendetta)
 const ret = typeof raw === 'function' ? raw() : raw

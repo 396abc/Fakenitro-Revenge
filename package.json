@@ -1,14 +1,19 @@
 {
-  "name": "fake-nitro",
+  "name": "fakenitro-revenge",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "private": true,
+  "description": "Vencord's FakeNitro, adapted for Revenge (Discord on Android)",
+  "author": "396abc",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/396abc/Fakenitro-Revenge.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test/harness.cjs"
+  },
   "devDependencies": {
     "esbuild": "^0.25.12",
     "react": "^18.3.1",

@@ -1,23 +1,22 @@
-// Receiving side: Vencord's transformAst, shouldIgnoreEmbed, patchFakeNitroStickers and filterAttachments.
-// Desktop does this in the markdown parser + message accessories; mobile builds every chat row in
-// RowManager.prototype.generate, so all of it happens there.
+// Receiving side: turn fake emoji/sticker links in chat back into real emoji and stickers.
+// Every message row on mobile is built by RowManager.generate, so everything happens there.
 import {
 	addUnpatch,
-	fakeNitroGifStickerRegex,
 	findName,
 	findProps,
 	getSearchParam,
+	gifStickerRegex,
 	logger,
 	Stores,
 	storage,
 } from './shared'
 
 const MESSAGE_ROW_TYPE = 1
-const MAX_JUMBO_EMOJIS = 30 // EmojiConstants.MAX_EMOJI_TO_BE_JUMBO
-const STICKER_SIZE = 160 // mobile renders all chat stickers at this size
+const MAX_JUMBO_EMOJIS = 30 // same limit Discord uses
+const STICKER_SIZE = 160 // mobile shows every chat sticker at this size
 const STICKER_RENDER_LOOP = 0
 
-const ExpressionUrlRegex =
+const expressionUrlRegex =
 	/^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/(emojis|stickers)\/(\d+)\.(\w+)/
 
 let AvatarUtils
@@ -25,8 +24,9 @@ let StickersUtils
 
 function parseExpressionUrl(url) {
 	if (typeof url !== 'string') return
-	const match = ExpressionUrlRegex.exec(url)
+	const match = expressionUrlRegex.exec(url)
 	if (!match) return
+
 	const extension = match[3].toLowerCase()
 	return {
 		kind: match[1],
@@ -37,6 +37,7 @@ function parseExpressionUrl(url) {
 	}
 }
 
+// Same shape as the emoji nodes Discord makes itself
 function createEmojiNode(link) {
 	const known = Stores.EmojiStore?.getCustomEmojiById(link.id)
 	const animated = link.animated || !!known?.animated
@@ -88,7 +89,7 @@ function isJumboable(nodes) {
 	return count > 0 && count <= MAX_JUMBO_EMOJIS
 }
 
-/** Vencord only transforms "simple" messages unless transformCompoundSentence is on */
+// Messages with text around the link are only changed if "Transform compound sentences" is on
 function isSimpleMessage(content) {
 	return trimWhitespace(content || []).length <= 1
 }
@@ -97,9 +98,10 @@ function attachmentUrl(a) {
 	return a?.url ?? a?.proxyURL ?? a?.proxy_url ?? a?.uri ?? a?.source?.uri
 }
 
+// Returns a changed copy of the message, or undefined if nothing needed changing
 function realify(message, isReplyPreview) {
 	const emojis = storage.transformEmojis
-	// Reply previews only show text, so sticker links stay links there
+	// Reply previews only show text, so sticker links are left as links there
 	const stickers = !isReplyPreview && storage.transformStickers
 	if (!emojis && !stickers) return
 
@@ -114,7 +116,11 @@ function realify(message, isReplyPreview) {
 		if (link && (link.kind === 'emojis' ? emojis : stickers)) return link
 	}
 
-	// transformAst: nodes may be cached by Discord, so copy instead of mutating
+	const addSticker = (id, name, extension) => {
+		if (!newStickers.has(id)) newStickers.set(id, createSticker(id, name, extension))
+	}
+
+	// Discord caches these nodes, so build new arrays instead of editing them
 	const convertNodes = nodes => {
 		let changed = false
 		const out = []
@@ -134,8 +140,8 @@ function realify(message, isReplyPreview) {
 				emojiIds.add(link.id)
 				return createEmojiNode(link)
 			}
-			// Sticker links are removed from the text and rendered as stickers instead
-			if (!newStickers.has(link.id)) newStickers.set(link.id, createSticker(link.id, link.name, link.extension))
+			// Sticker links get removed from the text and shown as a sticker instead
+			addSticker(link.id, link.name, link.extension)
 			return null
 		}
 		if (Array.isArray(node?.content)) {
@@ -147,7 +153,8 @@ function realify(message, isReplyPreview) {
 
 	let content = compoundOk ? convertNodes(original) : original
 
-	// shouldIgnoreEmbed: a message that is only a link has its text hidden behind the embed
+	// If the message is only a link, Discord hides the text and shows the image embed.
+	// Drop that embed and show the emoji/sticker instead.
 	let removedEmbeds = false
 	const embeds = !compoundOk
 		? message.embeds
@@ -157,7 +164,7 @@ function realify(message, isReplyPreview) {
 				if (!link) return true
 
 				if (link.kind === 'stickers') {
-					if (!newStickers.has(link.id)) newStickers.set(link.id, createSticker(link.id, link.name, link.extension))
+					addSticker(link.id, link.name, link.extension)
 				} else if (!emojiIds.has(link.id)) {
 					if (original.length) return true
 					if (content.length) content = content.concat([{ type: 'text', content: ' ' }])
@@ -168,20 +175,21 @@ function realify(message, isReplyPreview) {
 				return false
 			})
 
-	// filterAttachments + gif part of patchFakeNitroStickers: animated stickers sent by
-	// Vencord users as GIF uploads. Only treated as stickers when StickersStore knows the id.
+	// Vencord sends animated stickers as GIF uploads. Only treat a GIF as a sticker if
+	// the sticker id actually exists, otherwise normal GIF uploads would disappear.
 	let attachments = message.attachments
 	if (stickers && Array.isArray(attachments) && attachments.length) {
 		const kept = attachments.filter(a => {
-			const match = String(attachmentUrl(a) ?? '').match(fakeNitroGifStickerRegex)
+			const match = String(attachmentUrl(a) ?? '').match(gifStickerRegex)
 			if (!match || !Stores.StickersStore?.getStickerById(match[1])) return true
-			if (!newStickers.has(match[1])) newStickers.set(match[1], createSticker(match[1], undefined, 'gif'))
+			addSticker(match[1], undefined, 'gif')
 			return false
 		})
 		if (kept.length !== attachments.length) attachments = kept
 	}
 
-	if (content === original && !removedEmbeds && !newStickers.size && attachments === message.attachments) return
+	const attachmentsChanged = attachments !== message.attachments
+	if (content === original && !removedEmbeds && !newStickers.size && !attachmentsChanged) return
 
 	content = trimWhitespace(content)
 	if (!isReplyPreview && isJumboable(content)) {
@@ -190,7 +198,9 @@ function realify(message, isReplyPreview) {
 
 	const result = Object.assign({}, message, { content, embeds, attachments })
 	if (newStickers.size) result.stickers = (message.stickers || []).concat([...newStickers.values()])
-	if ((removedEmbeds || attachments !== message.attachments) && !embeds?.length && !attachments?.length) {
+
+	// Nothing left to show in the media area, turn off its layout
+	if ((removedEmbeds || attachmentsChanged) && !embeds?.length && !attachments?.length) {
 		result.useAttachmentGridLayout = false
 		result.useAttachmentUploadPreview = false
 	}
@@ -229,6 +239,3 @@ export function patchExpressionRendering({ safely }) {
 		)
 	})
 }
-
-// exported for tests
-export const _internal = { realify, parseExpressionUrl, setUtils: (a, s) => ((AvatarUtils = a), (StickersUtils = s)) }

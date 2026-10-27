@@ -1,14 +1,18 @@
-// Port of Vencord's client theme support: canUseClientThemes (premium.js), handleGradientThemeSelect
-// (apply gradient locally instead of syncing it to Discord) and handleProtoChange (keep the local
-// theme when Discord's synced settings come back on connect).
+// Nitro gradient themes. The theme is applied on this device only and never synced to
+// Discord's servers, since that would fail without Nitro.
 import { canActuallyUse } from './premium'
 import { addUnpatch, findProps, FluxDispatcher, logger, storage } from './shared'
 
 const { intercept } = bunny.api.flux
 
+// Theme picker indexes: 0 Light, 1 Dark, 2 Midnight, 3 Auto, then the gradients
+const isNonGradientThemeIndex = index => index < 4
+
 function applyStoredPreset() {
-	if (!storage.enableThemeBypass || typeof storage.themePreset !== 'number' || storage.themePreset < 0) return
+	if (!storage.enableThemeBypass) return
+	if (typeof storage.themePreset !== 'number' || storage.themePreset < 0) return
 	if (canActuallyUse('CLIENT_THEMES')) return
+
 	setTimeout(() => {
 		try {
 			FluxDispatcher.dispatch({ type: 'UPDATE_BACKGROUND_GRADIENT_PRESET', presetId: storage.themePreset })
@@ -18,11 +22,9 @@ function applyStoredPreset() {
 	})
 }
 
-// [Light, Dark, Midnight, Auto, ...gradient themes]
-const isNonGradientThemeIndex = index => index < 4
-
 export function patchThemes({ safely }) {
 	safely('client themes', () => {
+		// Remember which gradient was picked so it can be put back after a restart
 		const ThemeActions = findProps('updateBackgroundGradientPreset')
 		if (ThemeActions) {
 			const { before } = vendetta.patcher
@@ -39,14 +41,15 @@ export function patchThemes({ safely }) {
 				}),
 			)
 		} else {
-			logger.warn('[FakeNitro] ClientThemesBackgroundActionCreators not found; theme will not persist')
+			logger.warn('[FakeNitro] theme action creators not found, theme won\'t persist')
 		}
 
 		addUnpatch(
 			intercept(payload => {
 				if (!storage.enableThemeBypass) return
 
-				// handleGradientThemeSelect: don't sync a Nitro theme to Discord, apply it locally
+				// Picking a gradient tries to sync it to the account. Without Nitro that fails,
+				// so turn syncing off for this change and apply the theme locally.
 				if (payload.type === 'SELECTIVELY_SYNCED_USER_SETTINGS_UPDATE') {
 					const appearance = payload.changes?.appearance
 					const presetId = appearance?.settings?.clientThemeSettings?.backgroundGradientPresetId
@@ -64,7 +67,7 @@ export function patchThemes({ safely }) {
 					}
 				}
 
-				// handleProtoChange: server settings arriving on connect would reset the theme
+				// The account's real settings come back on connect and would reset the theme
 				if (payload.type === 'CONNECTION_OPEN') applyStoredPreset()
 			}),
 		)

@@ -1,5 +1,5 @@
-// Sending side: Vencord's emoji picker / intention patches, sticker "SENDABLE" patch,
-// addMessagePreSendListener, addMessagePreEditListener and the sticker bypass.
+// Sending side: unlock emoji and stickers in the pickers, and swap anything we can't
+// actually use for a CDN link when a message is sent or edited.
 import { showCannotEmbedNotice, showUnsupportedStickerNotice } from './alerts'
 import { canActuallyUse } from './premium'
 import {
@@ -24,9 +24,7 @@ const { before, instead } = vendetta.patcher
 
 let EmojiUtils
 let Intention = {}
-let ALLOWED_INTENTIONS = new Set()
-
-// ---------- Emoji availability (port of canUseEmote) ----------
+let allowedIntentions = new Set()
 
 function canUseEmote(emoji, channelId) {
 	if (!emoji || !emoji.id) return true // unicode emoji
@@ -35,22 +33,23 @@ function canUseEmote(emoji, channelId) {
 	const channel = Stores.ChannelStore?.getChannel(channelId)
 	const getReason = EmojiUtils?.default?.getEmojiUnavailableReason
 
-	// Discord's own check covers: role-subscription emoji, Twitch/managed sub emotes,
-	// external emoji permission, animated/premium lock and unavailable guild emoji.
+	// Ask Discord directly. It already handles external emoji perms, animated emoji,
+	// role subscription emoji and Twitch emotes. bypass: true skips our own patch below.
 	if (getReason && Intention.CHAT !== undefined) {
 		try {
-			return getReason.call(EmojiUtils.default, {
+			const reason = getReason.call(EmojiUtils.default, {
 				channel,
 				emoji,
 				intention: Intention.CHAT,
-				bypass: true, // our marker: skip the picker bypass and get the real answer
-			}) == null
+				bypass: true,
+			})
+			return reason == null
 		} catch (e) {
 			logger.error('[FakeNitro] getEmojiUnavailableReason failed, using fallback', e)
 		}
 	}
 
-	// Fallback: Vencord's original logic
+	// Fallback, same rules as Vencord
 	if (emoji.available === false) return false
 	const guildId = channel?.guild_id ?? Stores.SelectedGuildStore?.getGuildId?.()
 	if (premiumType() > 0) {
@@ -58,8 +57,6 @@ function canUseEmote(emoji, channelId) {
 	}
 	return !emoji.animated && emoji.guildId === guildId
 }
-
-// ---------- Link builders ----------
 
 function emojiUrl(emoji) {
 	const size = storage.emojiSize ?? DEFAULT_EMOJI_SIZE
@@ -70,7 +67,7 @@ function emojiUrl(emoji) {
 	return url
 }
 
-// StickerFormatType: 1 PNG, 2 APNG, 3 LOTTIE, 4 GIF
+// Sticker formats: 1 PNG, 2 APNG, 3 Lottie, 4 GIF
 function stickerUrl(sticker) {
 	const ext = sticker.format_type === 4 ? 'gif' : 'png'
 	const size = storage.stickerSize ?? DEFAULT_STICKER_SIZE
@@ -81,10 +78,11 @@ function stickerUrl(sticker) {
 }
 
 function emojiName(emoji) {
+	// Duplicate names get a ~1, ~2 suffix in the picker, drop it
 	return (emoji.originalName || emoji.name || 'emoji').replace(/~\d+$/, '')
 }
 
-// Replaces every `<a:name:id>` / `<:name:id>` for this emoji id, keeping Vencord's word-boundary spacing
+// Replace every <:name:id> / <a:name:id> for this emoji with a link
 function replaceEmoji(content, emoji) {
 	const link = formatLink(emojiUrl(emoji), emojiName(emoji))
 	const re = new RegExp(`<a?:[^:<>\\s]+:${emoji.id}>`, 'g')
@@ -93,9 +91,7 @@ function replaceEmoji(content, emoji) {
 	)
 }
 
-// ---------- Pre-send / pre-edit ----------
-
-/** @returns Promise<boolean> whether to continue sending */
+// Rewrites the message in place. Resolves to false if the user cancels.
 function processMessage(channelId, data, isEdit) {
 	if (!storage.enableEmojiBypass || !data || typeof data.content !== 'string') {
 		return Promise.resolve(true)
@@ -103,8 +99,9 @@ function processMessage(channelId, data, isEdit) {
 
 	let hasBypass = false
 
+	// Edits don't come with an emoji list, so look them up from the text.
+	// A backslash before the emoji means it's escaped, skip those.
 	if (isEdit) {
-		// Vencord's edit listener: scan raw content with EmojiStore
 		const seen = new Set()
 		const re = /(\\)?<a?:\w+:(\d+)>/g
 		let m
@@ -115,11 +112,10 @@ function processMessage(channelId, data, isEdit) {
 			if (!emoji || canUseEmote(emoji, channelId)) continue
 			hasBypass = true
 			data.content = replaceEmoji(data.content, emoji)
-			re.lastIndex = 0
+			re.lastIndex = 0 // content changed, start over (seen stops it looping)
 		}
 	}
 
-	// Emoji Discord already flagged as unusable
 	if (Array.isArray(data.invalidEmojis) && data.invalidEmojis.length) {
 		for (const emoji of data.invalidEmojis) {
 			if (!emoji?.id) continue
@@ -144,8 +140,6 @@ function processMessage(channelId, data, isEdit) {
 	return Promise.resolve(true)
 }
 
-// ---------- Patches ----------
-
 function patchEmojiAvailability() {
 	EmojiUtils = findProps('countEmoji')
 	const EmojiConstants =
@@ -157,9 +151,9 @@ function patchEmojiAvailability() {
 	}
 	if (Intention.CHAT === undefined) throw new Error('EmojiIntention not found')
 
-	// Vencord: IS_BYPASSEABLE_INTENTION = [CHAT, GUILD_STICKER_RELATED_EMOJI]
-	// Mobile also autocompletes emoji through AUTO_SUGGESTION.
-	ALLOWED_INTENTIONS = new Set(
+	// Only unlock emoji for chat. Reactions, statuses and the voice call picker stay locked
+	// like on Vencord, since those can't be faked with a link.
+	allowedIntentions = new Set(
 		[Intention.CHAT, Intention.GUILD_STICKER_RELATED_EMOJI, Intention.AUTO_SUGGESTION].filter(
 			x => x !== undefined,
 		),
@@ -168,7 +162,7 @@ function patchEmojiAvailability() {
 	addUnpatch(
 		instead('getEmojiUnavailableReason', EmojiUtils.default, function (args, orig) {
 			const opts = args[0] || {}
-			if (storage.enableEmojiBypass && !opts.bypass && ALLOWED_INTENTIONS.has(opts.intention)) {
+			if (storage.enableEmojiBypass && !opts.bypass && allowedIntentions.has(opts.intention)) {
 				return null
 			}
 			return orig.apply(this, args)
@@ -180,16 +174,16 @@ function patchEmojiPicker() {
 	const mod = findPath('modules/emoji_picker/native/components/EmojiPickerList.tsx')
 	if (!mod?.default) throw new Error('EmojiPickerList not found')
 
-	const empty = new Set()
+	// The export is wrapped in React.memo, so the real component is on .type
 	const target = mod.default.type ? mod.default : mod
 	const key = mod.default.type ? 'type' : 'default'
+	const empty = new Set()
 
 	addUnpatch(
 		before(key, target, args => {
 			const props = args[0]
 			if (!storage.enableEmojiBypass || !props) return
-			// Voice-call / status / reaction pickers keep their limits (Vencord's ".CHAT" -> ".STATUS" patch)
-			if (!ALLOWED_INTENTIONS.has(props.emojiPickerIntention)) return
+			if (!allowedIntentions.has(props.emojiPickerIntention)) return
 
 			for (const cat of props.categories || []) {
 				if (cat && 'emojisDisabled' in cat) {
@@ -205,7 +199,6 @@ function patchStickerPicker() {
 	const mod = findPath('modules/stickers/native/StickerPickerListRow.tsx')
 	if (!mod?.default) throw new Error('StickerPickerListRow not found')
 
-	// Vencord: '"SENDABLE"' patch, `x.available ? ...` -> `true ? ...`
 	addUnpatch(
 		before('default', mod, args => {
 			const props = args[0]
@@ -232,74 +225,77 @@ function patchMessageActions() {
 		}),
 	)
 
-	if (typeof Actions.sendStickers === 'function') {
-		addUnpatch(
-			instead('sendStickers', Actions, function (args, orig) {
-				if (!storage.enableStickerBypass) return orig.apply(this, args)
+	if (typeof Actions.sendStickers !== 'function') return
 
-				const [channelId, stickerIds, a2, extra] = args
-				const channel = Stores.ChannelStore?.getChannel(channelId)
-				if (!channel || !Array.isArray(stickerIds)) return orig.apply(this, args)
+	addUnpatch(
+		instead('sendStickers', Actions, function (args, orig) {
+			if (!storage.enableStickerBypass) return orig.apply(this, args)
 
-				const canUseStickers =
-					canActuallyUse('STICKERS_EVERYWHERE') && hasExternalStickerPerms(channelId)
+			const [channelId, stickerIds, a2, extra] = args
+			const channel = Stores.ChannelStore?.getChannel(channelId)
+			if (!channel || !Array.isArray(stickerIds)) return orig.apply(this, args)
 
-				const realIds = []
-				const links = []
-				let lottie = false
+			const canUseStickers =
+				canActuallyUse('STICKERS_EVERYWHERE') && hasExternalStickerPerms(channelId)
 
-				for (const id of stickerIds) {
-					const sticker = Stores.StickersStore?.getStickerById(id)
-					// Unknown, or a Discord default sticker (free for everyone)
-					if (!sticker || 'pack_id' in sticker) {
-						realIds.push(id)
-						continue
-					}
-					if (
-						sticker.available !== false &&
-						(canUseStickers || sticker.guild_id === channel.guild_id)
-					) {
-						realIds.push(id)
-						continue
-					}
-					if (sticker.format_type === 3) {
-						lottie = true
-						continue
-					}
-					links.push(formatLink(stickerUrl(sticker), sticker.name))
+			const realIds = []
+			const links = []
+			let hasLottie = false
+
+			for (const id of stickerIds) {
+				const sticker = Stores.StickersStore?.getStickerById(id)
+
+				// Unknown stickers and Discord's default ones (they have a pack_id) are free to send
+				if (!sticker || 'pack_id' in sticker) {
+					realIds.push(id)
+					continue
 				}
-
-				if (lottie) {
-					showUnsupportedStickerNotice()
-					return Promise.resolve()
+				if (
+					sticker.available !== false &&
+					(canUseStickers || sticker.guild_id === channel.guild_id)
+				) {
+					realIds.push(id)
+					continue
 				}
-				if (!links.length) return orig.apply(this, args)
+				if (sticker.format_type === 3) {
+					hasLottie = true
+					continue
+				}
+				links.push(formatLink(stickerUrl(sticker), sticker.name))
+			}
 
-				const proceed =
-					!storage.disableEmbedPermissionCheck && !hasEmbedPerms(channelId)
-						? showCannotEmbedNotice()
-						: Promise.resolve(true)
+			if (hasLottie) {
+				showUnsupportedStickerNotice()
+				return Promise.resolve()
+			}
+			if (!links.length) return orig.apply(this, args)
 
-				return proceed.then(ok => {
-					if (!ok) return
-					const sends = [
-						Actions.sendMessage(
-							channelId,
-							{ content: links.join(' '), invalidEmojis: [], validNonShortcutEmojis: [], tts: false },
-							a2,
-							extra,
-						),
-					]
-					if (realIds.length) {
-						const realArgs = args.slice()
-						realArgs[1] = realIds
-						sends.push(orig.apply(this, realArgs))
-					}
-					return Promise.all(sends)
-				})
-			}),
-		)
-	}
+			const proceed =
+				!storage.disableEmbedPermissionCheck && !hasEmbedPerms(channelId)
+					? showCannotEmbedNotice()
+					: Promise.resolve(true)
+
+			return proceed.then(ok => {
+				if (!ok) return
+
+				const sends = [
+					Actions.sendMessage(
+						channelId,
+						{ content: links.join(' '), invalidEmojis: [], validNonShortcutEmojis: [], tts: false },
+						a2,
+						extra,
+					),
+				]
+				// Any stickers we can actually use still get sent normally
+				if (realIds.length) {
+					const realArgs = args.slice()
+					realArgs[1] = realIds
+					sends.push(orig.apply(this, realArgs))
+				}
+				return Promise.all(sends)
+			})
+		}),
+	)
 }
 
 export function patchExpressionSending({ safely }) {

@@ -1,5 +1,4 @@
-// Ports of Vencord's CannotEmbedNoticeModal and the "can't attach" ConfirmModal,
-// rebuilt with Discord mobile's AlertModal (via Revenge's component exports).
+// Popups shown while sending.
 import { React, storage } from './shared'
 
 const { AlertModal, AlertActionButton, AlertActions } = bunny.metro.common.components
@@ -15,7 +14,7 @@ function CannotEmbedNotice({ resolve }) {
 		resolve(value)
 	}
 
-	// Closing the alert any other way counts as cancel (like onCloseCallback in Vencord)
+	// Closing the popup without pressing a button counts as cancel
 	useEffect(() => () => done(false), [])
 
 	return (
@@ -44,6 +43,7 @@ function CannotEmbedNotice({ resolve }) {
 	)
 }
 
+// Resolves true if the user wants to send anyway
 export function showCannotEmbedNotice() {
 	return new Promise(resolve => {
 		openAlert('fake-nitro-cannot-embed', <CannotEmbedNotice resolve={resolve} />)

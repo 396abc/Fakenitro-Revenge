@@ -1,5 +1,4 @@
-// Port of Vencord's app icon patch (canUsePremiumAppIcons + isPremium(getCurrentUser()) -> true)
-// and the soundboard patch (force `available: true` on received sounds).
+// Premium app icons and soundboard sounds.
 import { addUnpatch, findProps, logger, storage } from './shared'
 
 const SOUNDBOARD_EVENTS = new Set([
@@ -11,15 +10,13 @@ const SOUNDBOARD_EVENTS = new Set([
 
 export function patchAppIcons({ safely }) {
 	safely('app icons', () => {
-		const { after, instead } = vendetta.patcher
+		const { after } = vendetta.patcher
 
+		// Discord checks icons against the free list, so make the free list contain every icon
 		const AppIconTypes = findProps('MasterAppIconIds')
 		if (AppIconTypes) {
 			const { FreemiumAppIconIds, MasterAppIconIds } = AppIconTypes
-			const apply = () => {
-				AppIconTypes.FreemiumAppIconIds = storage.enableAppIconBypass ? MasterAppIconIds : FreemiumAppIconIds
-			}
-			apply()
+			if (storage.enableAppIconBypass) AppIconTypes.FreemiumAppIconIds = MasterAppIconIds
 			addUnpatch(() => {
 				AppIconTypes.FreemiumAppIconIds = FreemiumAppIconIds
 			})
@@ -34,22 +31,23 @@ export function patchAppIcons({ safely }) {
 			if (icon && storage.enableAppIconBypass) icon.isPremium = false
 			return icon
 		}
-		const unlockAll = icons => {
-			if (Array.isArray(icons)) icons.forEach(unlock)
-			return icons
-		}
 
 		for (const fn of ['getIcons', 'getOfficialAlternateIcons', 'getLimitedAlternateIcons']) {
-			if (typeof AppIconUtils[fn] === 'function') {
-				addUnpatch(after(fn, AppIconUtils, (_, ret) => unlockAll(ret)))
-			}
+			if (typeof AppIconUtils[fn] !== 'function') continue
+			addUnpatch(
+				after(fn, AppIconUtils, (_, icons) => {
+					if (Array.isArray(icons)) icons.forEach(unlock)
+					return icons
+				}),
+			)
 		}
 		if (typeof AppIconUtils.getIconById === 'function') {
-			addUnpatch(after('getIconById', AppIconUtils, (_, ret) => unlock(ret)))
+			addUnpatch(after('getIconById', AppIconUtils, (_, icon) => unlock(icon)))
 		}
 	})
 }
 
+// Sound objects can be nested a few levels deep depending on the event, so walk the payload
 function markAvailable(value, depth) {
 	if (!value || typeof value !== 'object' || depth > 6) return
 	if (Array.isArray(value)) {
@@ -64,7 +62,9 @@ export function patchSoundboard({ safely }) {
 	safely('soundboard', () => {
 		addUnpatch(
 			bunny.api.flux.intercept(payload => {
-				if (storage.enableSoundboardBypass && SOUNDBOARD_EVENTS.has(payload.type)) markAvailable(payload, 0)
+				if (storage.enableSoundboardBypass && SOUNDBOARD_EVENTS.has(payload.type)) {
+					markAvailable(payload, 0)
+				}
 			}),
 		)
 	})

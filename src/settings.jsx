@@ -1,5 +1,4 @@
-// Settings page: Vencord's definePluginSettings options, rebuilt with Discord mobile's
-// table components (via Revenge) instead of Vencord's settings UI.
+// Settings page. Same options as the Vencord plugin, built with Discord's own mobile components.
 import { DEFAULTS, MEDIA_SIZES, React, ReactNative, storage } from './shared'
 
 const { ScrollView } = ReactNative
@@ -15,6 +14,7 @@ const {
 } = bunny.metro.common.components
 const { getAssetIDByName } = vendetta.ui.assets
 
+// Skip the icon if Discord renamed or removed the asset
 function Icon({ name }) {
 	const id = getAssetIDByName(name)
 	return id ? <TableRow.Icon source={id} /> : null
@@ -32,6 +32,7 @@ function Switch({ setting, label, subLabel, icon }) {
 	)
 }
 
+// Radio rows only take string values, so sizes are stored as numbers and converted here
 function SizePicker({ setting, title }) {
 	return (
 		<TableRadioGroup

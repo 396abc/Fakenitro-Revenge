@@ -1,5 +1,4 @@
-// Shared state, settings, module lookups and helpers.
-// Port of Vencord's FakeNitro to classic Revenge (Vendetta-compatible plugin API).
+// Things every other file needs: settings, module finders and small helpers.
 
 export const storage = vendetta.plugin.storage
 export const logger = vendetta.logger
@@ -11,7 +10,7 @@ export const DEFAULT_EMOJI_SIZE = 48
 export const DEFAULT_STICKER_SIZE = 160
 export const MEDIA_SIZES = [16, 32, 48, 56, 64, 96, 128, 160, 256, 512, 1024]
 
-// Same option set and defaults as Vencord's definePluginSettings
+// Same options and defaults as the Vencord plugin, plus a few mobile extras at the bottom
 export const DEFAULTS = {
 	enableEmojiBypass: true,
 	emojiSize: DEFAULT_EMOJI_SIZE,
@@ -24,11 +23,11 @@ export const DEFAULTS = {
 	useHyperLinks: true,
 	hyperLinkText: '{{NAME}}',
 	disableEmbedPermissionCheck: false,
-	// Mobile-only extras
+
 	enableThemeBypass: true,
 	enableAppIconBypass: true,
 	enableSoundboardBypass: true,
-	// -1 = none. Revenge's storage proxy throws on null values, so never store null.
+	// -1 means no theme saved. Don't use null here, Revenge's storage crashes on it.
 	themePreset: -1,
 }
 
@@ -38,7 +37,7 @@ export function initStorage() {
 	}
 }
 
-// ---------- Module lookups ----------
+// Finders. These log instead of throwing so one missing module doesn't kill the whole plugin.
 
 export function findProps(...props) {
 	try {
@@ -81,17 +80,16 @@ export const Stores = {
 	get SelectedGuildStore() { return findStore('SelectedGuildStore') },
 }
 
-// ---------- Permissions ----------
-
+// Discord permission bits
 export const Permissions = {
 	EMBED_LINKS: BigInt(1) << BigInt(14),
-	ATTACH_FILES: BigInt(1) << BigInt(15),
 	USE_EXTERNAL_EMOJIS: BigInt(1) << BigInt(18),
 	USE_EXTERNAL_STICKERS: BigInt(1) << BigInt(37),
 }
 
 export function hasPermission(channelId, permission) {
 	const channel = Stores.ChannelStore?.getChannel(channelId)
+	// DMs have no permissions to check
 	if (!channel || channel.isPrivate?.()) return true
 	try {
 		return Stores.PermissionStore.can(permission, channel)
@@ -103,22 +101,16 @@ export function hasPermission(channelId, permission) {
 export const hasEmbedPerms = id => hasPermission(id, Permissions.EMBED_LINKS)
 export const hasExternalStickerPerms = id => hasPermission(id, Permissions.USE_EXTERNAL_STICKERS)
 
-// ---------- Nitro state ----------
-
 export function premiumType() {
 	return Stores.UserStore?.getCurrentUser?.()?.premiumType ?? 0
 }
 
-// ---------- Regexes (from Vencord) ----------
+// Matches the GIF uploads Vencord users send for animated stickers
+export const gifStickerRegex = /\/attachments\/\d+?\/\d+?\/(\d+?)\.gif/
 
-export const fakeNitroEmojiRegex = /\/emojis\/(\d+?)\.(png|webp|gif)/
-export const fakeNitroStickerRegex = /\/stickers\/(\d+?)\./
-export const fakeNitroGifStickerRegex = /\/attachments\/\d+?\/\d+?\/(\d+?)\.gif/
-export const hyperLinkRegex = /\[.+?\]\((https?:\/\/.+?)\)/
-export const hyperLinkOnlyRegex = new RegExp(`^${hyperLinkRegex.source}$`)
-
-export function getWordBoundary(origStr, offset) {
-	return !origStr[offset] || /\s/.test(origStr[offset]) ? '' : ' '
+// Adds a space if the character next to the link isn't already whitespace
+export function getWordBoundary(str, offset) {
+	return !str[offset] || /\s/.test(str[offset]) ? '' : ' '
 }
 
 export function getSearchParam(url, name) {
@@ -131,15 +123,13 @@ export function getSearchParam(url, name) {
 	}
 }
 
-export function linkText(name) {
-	return String(storage.hyperLinkText ?? DEFAULTS.hyperLinkText).split('{{NAME}}').join(name)
-}
-
 export function formatLink(url, name) {
-	return storage.useHyperLinks ? `[${linkText(name)}](${url})` : url
+	if (!storage.useHyperLinks) return url
+	const text = String(storage.hyperLinkText ?? DEFAULTS.hyperLinkText).split('{{NAME}}').join(name)
+	return `[${text}](${url})`
 }
 
-// ---------- Unpatch bookkeeping ----------
+// Every patch registers its undo function here so onUnload can clean up
 
 const unpatches = []
 
@@ -157,6 +147,7 @@ export function unpatchAll() {
 	}
 }
 
+// Runs one group of patches and logs whether it worked, so a broken group is easy to spot in logcat
 export function safely(name, fn) {
 	try {
 		fn()
