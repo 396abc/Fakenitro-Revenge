@@ -110,7 +110,7 @@ export default function Settings() {
 						description="What text the hyperlink should use. {{NAME}} will be replaced with the emoji/sticker name."
 						placeholder="{{NAME}}"
 						value={storage.hyperLinkText}
-						onChange={v => (storage.hyperLinkText = v)}
+						onChange={v => (storage.hyperLinkText = v ?? '')}
 						isClearable
 					/>
 				)}

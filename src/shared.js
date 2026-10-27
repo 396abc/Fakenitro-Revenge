@@ -28,12 +28,13 @@ export const DEFAULTS = {
 	enableThemeBypass: true,
 	enableAppIconBypass: true,
 	enableSoundboardBypass: true,
-	themePreset: null,
+	// -1 = none. Revenge's storage proxy throws on null values, so never store null.
+	themePreset: -1,
 }
 
 export function initStorage() {
 	for (const key in DEFAULTS) {
-		if (storage[key] === undefined) storage[key] = DEFAULTS[key]
+		if (storage[key] === undefined || storage[key] === null) storage[key] = DEFAULTS[key]
 	}
 }
 

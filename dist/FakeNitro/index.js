@@ -47,11 +47,12 @@
     enableThemeBypass: true,
     enableAppIconBypass: true,
     enableSoundboardBypass: true,
-    themePreset: null
+    // -1 = none. Revenge's storage proxy throws on null values, so never store null.
+    themePreset: -1
   };
   function initStorage() {
     for (const key in DEFAULTS) {
-      if (storage[key] === void 0) storage[key] = DEFAULTS[key];
+      if (storage[key] === void 0 || storage[key] === null) storage[key] = DEFAULTS[key];
     }
   }
   function findProps(...props) {
@@ -840,7 +841,7 @@
         description: "What text the hyperlink should use. {{NAME}} will be replaced with the emoji/sticker name.",
         placeholder: "{{NAME}}",
         value: storage.hyperLinkText,
-        onChange: (v) => storage.hyperLinkText = v,
+        onChange: (v) => storage.hyperLinkText = v != null ? v : "",
         isClearable: true
       }
     ), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Streaming" }, /* @__PURE__ */ React.createElement(
@@ -881,7 +882,7 @@
   // src/themes.js
   var { intercept } = bunny.api.flux;
   function applyStoredPreset() {
-    if (!storage.enableThemeBypass || storage.themePreset == null) return;
+    if (!storage.enableThemeBypass || typeof storage.themePreset !== "number" || storage.themePreset < 0) return;
     if (canActuallyUse("CLIENT_THEMES")) return;
     setTimeout(() => {
       try {
@@ -900,13 +901,13 @@
         if (typeof ThemeActions.updateMobilePendingThemeIndex === "function") {
           addUnpatch(
             before2("updateMobilePendingThemeIndex", ThemeActions, (args) => {
-              if (isNonGradientThemeIndex(args[0])) storage.themePreset = null;
+              if (isNonGradientThemeIndex(args[0])) storage.themePreset = -1;
             })
           );
         }
         addUnpatch(
           before2("updateBackgroundGradientPreset", ThemeActions, (args) => {
-            storage.themePreset = args[0];
+            if (typeof args[0] === "number") storage.themePreset = args[0];
           })
         );
       } else {

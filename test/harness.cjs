@@ -160,7 +160,7 @@ function useProxy() {
 }
 const listeners = new Set()
 const storage = new Proxy(store, {
-	set(t, k, v) { t[k] = v; listeners.forEach(f => f(x => x + 1)); return true },
+	set(t, k, v) { if (v === null) new Proxy(v, {}); t[k] = v; listeners.forEach(f => f(x => x + 1)); return true },
 })
 
 const logs = []
@@ -429,7 +429,7 @@ const EMOJI = id => {
 		}).then(() => {
 			assert(dispatched.some(d => d.type === 'UPDATE_BACKGROUND_GRADIENT_PRESET' && d.presetId === 7))
 			ThemeActions.updateMobilePendingThemeIndex(1)
-			assert.strictEqual(storage.themePreset, null)
+			assert.strictEqual(storage.themePreset, -1)
 		})
 	})
 

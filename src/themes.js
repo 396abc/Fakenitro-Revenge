@@ -7,7 +7,7 @@ import { addUnpatch, findProps, FluxDispatcher, logger, storage } from './shared
 const { intercept } = bunny.api.flux
 
 function applyStoredPreset() {
-	if (!storage.enableThemeBypass || storage.themePreset == null) return
+	if (!storage.enableThemeBypass || typeof storage.themePreset !== 'number' || storage.themePreset < 0) return
 	if (canActuallyUse('CLIENT_THEMES')) return
 	setTimeout(() => {
 		try {
@@ -29,13 +29,13 @@ export function patchThemes({ safely }) {
 			if (typeof ThemeActions.updateMobilePendingThemeIndex === 'function') {
 				addUnpatch(
 					before('updateMobilePendingThemeIndex', ThemeActions, args => {
-						if (isNonGradientThemeIndex(args[0])) storage.themePreset = null
+						if (isNonGradientThemeIndex(args[0])) storage.themePreset = -1
 					}),
 				)
 			}
 			addUnpatch(
 				before('updateBackgroundGradientPreset', ThemeActions, args => {
-					storage.themePreset = args[0]
+					if (typeof args[0] === 'number') storage.themePreset = args[0]
 				}),
 			)
 		} else {
