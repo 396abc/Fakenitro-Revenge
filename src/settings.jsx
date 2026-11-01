@@ -1,5 +1,6 @@
 // Settings page. Same options as the Vencord plugin, built with Discord's own mobile components.
 import { getComponents } from './components'
+import { applyLimits } from './longMessages'
 import { DEFAULTS, MEDIA_SIZES, React, ReactNative, storage } from './shared'
 
 const { ScrollView } = ReactNative
@@ -13,7 +14,7 @@ function Icon({ name }) {
 	return id && TableRowIcon ? <TableRowIcon source={id} /> : null
 }
 
-function Switch({ setting, label, subLabel, icon }) {
+function Switch({ setting, label, subLabel, icon, onChange }) {
 	const { TableSwitchRow } = getComponents()
 	return (
 		<TableSwitchRow
@@ -21,7 +22,10 @@ function Switch({ setting, label, subLabel, icon }) {
 			subLabel={subLabel}
 			icon={icon ? <Icon name={icon} /> : undefined}
 			value={!!storage[setting]}
-			onValueChange={v => (storage[setting] = v)}
+			onValueChange={v => {
+				storage[setting] = v
+				onChange?.(v)
+			}}
 		/>
 	)
 }
@@ -111,6 +115,16 @@ export default function Settings() {
 						isClearable
 					/>
 				)}
+
+				<TableRowGroup title="Long messages">
+					<Switch
+						setting="uploadLongMessages"
+						icon="FileIcon"
+						label="Upload long messages as files"
+						subLabel="Instead of the Nitro popup, offer to send messages over the limit as message.txt"
+						onChange={applyLimits}
+					/>
+				</TableRowGroup>
 
 				<TableRowGroup title="Streaming">
 					<Switch

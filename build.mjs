@@ -30,7 +30,7 @@ const manifest = {
 	name: 'Fake Nitro',
 	description:
 		'A vibecoded plugin for Revenge, adapting the FakeNitro plugin from Vencord. Send fake emojis and stickers, ' +
-		'see them as real ones, and use Nitro themes, app icons, stream quality and soundboard. ' +
+		'see them as real ones, send long messages as files, and use Nitro themes, app icons, stream quality and soundboard. ' +
 		'Original FakeNitro by Arjix, D3SOX, Ven, fawn, captain, Nuckyz, AutumnVN and sadan (Vencord). ' +
 		"Mobile adaptation based on Palm's Revenge Next fake-nitro.",
 	authors: [{ name: '396abc' }],

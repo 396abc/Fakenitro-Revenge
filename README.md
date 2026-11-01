@@ -2,7 +2,7 @@
 
 A vibecoded plugin for [Revenge](https://github.com/revenge-mod/revenge-bundle) (Discord on Android), adapting the FakeNitro plugin from [Vencord](https://github.com/Vendicated/Vencord).
 
-You can use emojis and stickers from any server, see other people's fake emojis as the real thing, and unlock Nitro themes, app icons, stream quality and the soundboard.
+You can use emojis and stickers from any server, see other people's fake emojis as the real thing, send messages over the length limit as a file, and unlock Nitro themes, app icons, stream quality and the soundboard.
 
 ## Install
 
@@ -25,6 +25,7 @@ This is for the classic version of Revenge (the one with the plugin URL box). It
 - **App icons**: all the premium icons are unlocked.
 - **Stream quality**: higher quality options when streaming.
 - **Soundboard**: sounds that show as unavailable are usable again.
+- **Long messages**: instead of the "upgrade to Nitro" popup when your message is too long, you get an **Upload as file** button that sends it as `message.txt`, same as desktop. Works with replies too.
 
 Everything can be turned on and off in the plugin's settings, same options as the Vencord version.
 

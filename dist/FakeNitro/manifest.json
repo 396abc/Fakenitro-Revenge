@@ -1,13 +1,13 @@
 {
   "name": "Fake Nitro",
-  "description": "A vibecoded plugin for Revenge, adapting the FakeNitro plugin from Vencord. Send fake emojis and stickers, see them as real ones, and use Nitro themes, app icons, stream quality and soundboard. Original FakeNitro by Arjix, D3SOX, Ven, fawn, captain, Nuckyz, AutumnVN and sadan (Vencord). Mobile adaptation based on Palm's Revenge Next fake-nitro.",
+  "description": "A vibecoded plugin for Revenge, adapting the FakeNitro plugin from Vencord. Send fake emojis and stickers, see them as real ones, send long messages as files, and use Nitro themes, app icons, stream quality and soundboard. Original FakeNitro by Arjix, D3SOX, Ven, fawn, captain, Nuckyz, AutumnVN and sadan (Vencord). Mobile adaptation based on Palm's Revenge Next fake-nitro.",
   "authors": [
     {
       "name": "396abc"
     }
   ],
   "main": "index.js",
-  "hash": "88a3ed6e79ce4931e96485136da15014b0109193ee1be6d4cdac26a5e5441a62",
+  "hash": "20f77c9ed0c7953f88d6dbb2c5baa5a7970511eada9398ac3a1ef5555d9ec922",
   "vendetta": {
     "icon": "NitroWheelIcon"
   }

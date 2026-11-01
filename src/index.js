@@ -4,6 +4,7 @@
 // Licensed under GPL-3.0, like both of those.
 import { patchAppIcons, patchSoundboard } from './extras'
 import { patchExpressionSending } from './fakeify'
+import { patchLongMessages } from './longMessages'
 import { patchPremium } from './premium'
 import { patchExpressionRendering } from './realify'
 import Settings from './settings'
@@ -22,6 +23,7 @@ export default {
 		patchThemes(ctx)
 		patchAppIcons(ctx)
 		patchSoundboard(ctx)
+		patchLongMessages(ctx)
 
 		logger.log('[FakeNitro] loaded')
 	},

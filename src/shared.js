@@ -27,6 +27,7 @@ export const DEFAULTS = {
 	enableThemeBypass: true,
 	enableAppIconBypass: true,
 	enableSoundboardBypass: true,
+	uploadLongMessages: true,
 	// -1 means no theme saved. Don't use null here, Revenge's storage crashes on it.
 	themePreset: -1,
 }
@@ -78,6 +79,7 @@ export const Stores = {
 	get StickersStore() { return findStore('StickersStore') },
 	get EmojiStore() { return findStore('EmojiStore') },
 	get SelectedGuildStore() { return findStore('SelectedGuildStore') },
+	get DraftStore() { return findStore('DraftStore') },
 }
 
 // Discord permission bits

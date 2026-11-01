@@ -1,8 +1,25 @@
 (() => {
   var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -16,6 +33,26 @@
     return to;
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+  var __async = (__this, __arguments, generator) => {
+    return new Promise((resolve, reject) => {
+      var fulfilled = (value) => {
+        try {
+          step(generator.next(value));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      var rejected = (value) => {
+        try {
+          step(generator.throw(value));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
+      step((generator = generator.apply(__this, __arguments)).next());
+    });
+  };
 
   // src/index.js
   var index_exports = {};
@@ -46,6 +83,7 @@
     enableThemeBypass: true,
     enableAppIconBypass: true,
     enableSoundboardBypass: true,
+    uploadLongMessages: true,
     // -1 means no theme saved. Don't use null here, Revenge's storage crashes on it.
     themePreset: -1
   };
@@ -100,6 +138,9 @@
     },
     get SelectedGuildStore() {
       return findStore("SelectedGuildStore");
+    },
+    get DraftStore() {
+      return findStore("DraftStore");
     }
   };
   var Permissions = {
@@ -258,7 +299,7 @@
   // src/alerts.jsx
   var { openAlert } = bunny.ui.alerts;
   var { useEffect, useRef } = React;
-  function CannotEmbedNotice({ resolve }) {
+  function Confirm({ title, content, buttons, resolve }) {
     const { AlertModal, AlertActionButton, AlertActions } = getComponents();
     const settled = useRef(false);
     const done = (value) => {
@@ -270,40 +311,59 @@
     return /* @__PURE__ */ React.createElement(
       AlertModal,
       {
-        title: "Hold on!",
-        content: "You are trying to send/edit a message that contains a FakeNitro emoji or sticker, however you do not have permissions to embed links in the current channel. Are you sure you want to send this message? Your FakeNitro items will appear as a link only.",
-        actions: /* @__PURE__ */ React.createElement(AlertActions, null, /* @__PURE__ */ React.createElement(AlertActionButton, { variant: "destructive", text: "Send Anyway", onPress: () => done(true) }), /* @__PURE__ */ React.createElement(
+        title,
+        content,
+        actions: /* @__PURE__ */ React.createElement(AlertActions, null, buttons.map((b) => /* @__PURE__ */ React.createElement(
           AlertActionButton,
           {
-            variant: "secondary",
-            text: "Send Anyway & Don't Ask Again",
+            key: b.text,
+            variant: b.variant,
+            text: b.text,
             onPress: () => {
-              storage.disableEmbedPermissionCheck = true;
-              done(true);
+              var _a;
+              (_a = b.onPress) == null ? void 0 : _a.call(b);
+              done(b.value);
             }
           }
-        ), /* @__PURE__ */ React.createElement(AlertActionButton, { variant: "secondary", text: "Cancel", onPress: () => done(false) }))
+        )))
       }
     );
   }
+  function confirm(key, props) {
+    return new Promise((resolve) => openAlert(key, /* @__PURE__ */ React.createElement(Confirm, __spreadProps(__spreadValues({}, props), { resolve }))));
+  }
   function showCannotEmbedNotice() {
-    return new Promise((resolve) => {
-      openAlert("fake-nitro-cannot-embed", /* @__PURE__ */ React.createElement(CannotEmbedNotice, { resolve }));
+    return confirm("fake-nitro-cannot-embed", {
+      title: "Hold on!",
+      content: "You are trying to send/edit a message that contains a FakeNitro emoji or sticker, however you do not have permissions to embed links in the current channel. Are you sure you want to send this message? Your FakeNitro items will appear as a link only.",
+      buttons: [
+        { text: "Send Anyway", variant: "destructive", value: true },
+        {
+          text: "Send Anyway & Don't Ask Again",
+          variant: "secondary",
+          value: true,
+          onPress: () => storage.disableEmbedPermissionCheck = true
+        },
+        { text: "Cancel", variant: "secondary", value: false }
+      ]
+    });
+  }
+  function showMessageTooLongNotice(length, limit) {
+    return confirm("fake-nitro-message-too-long", {
+      title: "Message too long",
+      content: `Your message is ${length.toLocaleString()} characters, the limit is ${limit.toLocaleString()}. You can send it as a file instead.`,
+      buttons: [
+        { text: "Upload as file", variant: "primary", value: true },
+        { text: "Cancel", variant: "secondary", value: false }
+      ]
     });
   }
   function showUnsupportedStickerNotice() {
-    const { AlertModal, AlertActionButton, AlertActions } = getComponents();
-    openAlert(
-      "fake-nitro-unsupported-sticker",
-      /* @__PURE__ */ React.createElement(
-        AlertModal,
-        {
-          title: "Hold on!",
-          content: "This sticker is a Lottie sticker, which can't be sent as a FakeNitro link. Please remove it to proceed.",
-          actions: /* @__PURE__ */ React.createElement(AlertActions, null, /* @__PURE__ */ React.createElement(AlertActionButton, { variant: "primary", text: "OK" }))
-        }
-      )
-    );
+    confirm("fake-nitro-unsupported-sticker", {
+      title: "Hold on!",
+      content: "This sticker is a Lottie sticker, which can't be sent as a FakeNitro link. Please remove it to proceed.",
+      buttons: [{ text: "OK", variant: "primary", value: false }]
+    });
   }
 
   // src/premium.js
@@ -592,6 +652,92 @@
     safely2("send/edit/sticker bypass", patchMessageActions);
   }
 
+  // src/longMessages.js
+  var FILE_NAME = "message.txt";
+  var NO_LIMIT = 1073741824;
+  var Limits;
+  var original;
+  var realLimit = () => premiumType() === 2 ? 4e3 : 2e3;
+  function applyLimits() {
+    if (!Limits || !original) return;
+    const raise = storage.uploadLongMessages;
+    Limits.MAX_MESSAGE_LENGTH = raise ? NO_LIMIT : original.normal;
+    Limits.MAX_MESSAGE_LENGTH_PREMIUM = raise ? NO_LIMIT : original.premium;
+  }
+  function utf8Length(str) {
+    let n = 0;
+    for (const ch of str) {
+      const c = ch.codePointAt(0);
+      n += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;
+    }
+    return n;
+  }
+  function getHTTP() {
+    var _a, _b;
+    return (_b = (_a = findProps("HTTP")) == null ? void 0 : _a.HTTP) != null ? _b : findProps("getAPIBaseURL", "post");
+  }
+  function uploadAsFile(channelId, content, options) {
+    return __async(this, null, function* () {
+      var _a;
+      const HTTP = getHTTP();
+      if (!HTTP) throw new Error("HTTP module not found");
+      const { body } = yield HTTP.post({
+        url: `/channels/${channelId}/attachments`,
+        body: { files: [{ id: "0", filename: FILE_NAME, file_size: utf8Length(content) }] }
+      });
+      const target = (_a = body == null ? void 0 : body.attachments) == null ? void 0 : _a[0];
+      if (!(target == null ? void 0 : target.upload_url)) throw new Error("Discord did not return an upload URL");
+      const res = yield fetch(target.upload_url, { method: "PUT", body: content });
+      if (!res.ok) throw new Error(`File upload failed (${res.status})`);
+      const message = {
+        content: "",
+        attachments: [{ id: "0", filename: FILE_NAME, uploaded_filename: target.upload_filename }]
+      };
+      if (options == null ? void 0 : options.messageReference) message.message_reference = options.messageReference;
+      if (options == null ? void 0 : options.allowedMentions) message.allowed_mentions = options.allowedMentions;
+      yield HTTP.post({ url: `/channels/${channelId}/messages`, body: message });
+    });
+  }
+  function restoreText(channelId, content) {
+    var _a, _b, _c, _d;
+    const draft = (_b = (_a = Stores.DraftStore) == null ? void 0 : _a.getDraft) == null ? void 0 : _b.call(_a, channelId, 0);
+    if (draft) return;
+    (_d = (_c = findProps("getBestActiveInputForChannelId")) == null ? void 0 : _c.getBestActiveInputForChannelId(channelId)) == null ? void 0 : _d.insertText(content);
+  }
+  function patchLongMessages({ safely: safely2 }) {
+    safely2("long messages", () => {
+      Limits = findProps("MAX_MESSAGE_LENGTH");
+      if (!Limits) throw new Error("MAX_MESSAGE_LENGTH not found");
+      original = { normal: Limits.MAX_MESSAGE_LENGTH, premium: Limits.MAX_MESSAGE_LENGTH_PREMIUM };
+      applyLimits();
+      addUnpatch(() => {
+        Limits.MAX_MESSAGE_LENGTH = original.normal;
+        Limits.MAX_MESSAGE_LENGTH_PREMIUM = original.premium;
+      });
+      const Actions = findProps("sendMessage", "editMessage");
+      if (!Actions) throw new Error("MessageActionCreators not found");
+      addUnpatch(
+        vendetta.patcher.instead("sendMessage", Actions, function(args, orig) {
+          const [channelId, message, , options] = args;
+          const content = message == null ? void 0 : message.content;
+          const limit = realLimit();
+          if (!storage.uploadLongMessages || typeof content !== "string" || content.length <= limit) {
+            return orig.apply(this, args);
+          }
+          return showMessageTooLongNotice(content.length, limit).then((upload) => {
+            if (!upload) return restoreText(channelId, content);
+            return uploadAsFile(channelId, content, options).catch((e) => {
+              var _a;
+              logger.error("[FakeNitro] long message upload failed", e);
+              vendetta.ui.toasts.showToast(`Couldn't upload message: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+              restoreText(channelId, content);
+            });
+          });
+        })
+      );
+    });
+  }
+
   // src/realify.js
   var MESSAGE_ROW_TYPE = 1;
   var MAX_JUMBO_EMOJIS = 30;
@@ -673,8 +819,8 @@
     const emojis = storage.transformEmojis;
     const stickers = !isReplyPreview && storage.transformStickers;
     if (!emojis && !stickers) return;
-    const original = message.content || [];
-    const compoundOk = storage.transformCompoundSentence || isSimpleMessage(original);
+    const original2 = message.content || [];
+    const compoundOk = storage.transformCompoundSentence || isSimpleMessage(original2);
     const emojiIds = /* @__PURE__ */ new Set();
     const newStickers = /* @__PURE__ */ new Map();
     const parse = (url) => {
@@ -711,7 +857,7 @@
       }
       return node;
     };
-    let content = compoundOk ? convertNodes(original) : original;
+    let content = compoundOk ? convertNodes(original2) : original2;
     let removedEmbeds = false;
     const embeds = !compoundOk ? message.embeds : (_a = message.embeds) == null ? void 0 : _a.filter((embed) => {
       var _a2, _b;
@@ -721,7 +867,7 @@
       if (link.kind === "stickers") {
         addSticker(link.id, link.name, link.extension);
       } else if (!emojiIds.has(link.id)) {
-        if (original.length) return true;
+        if (original2.length) return true;
         if (content.length) content = content.concat([{ type: "text", content: " " }]);
         content = content.concat([createEmojiNode(link)]);
         emojiIds.add(link.id);
@@ -741,7 +887,7 @@
       if (kept.length !== attachments.length) attachments = kept;
     }
     const attachmentsChanged = attachments !== message.attachments;
-    if (content === original && !removedEmbeds && !newStickers.size && !attachmentsChanged) return;
+    if (content === original2 && !removedEmbeds && !newStickers.size && !attachmentsChanged) return;
     content = trimWhitespace(content);
     if (!isReplyPreview && isJumboable(content)) {
       content = content.map((n) => Object.assign({}, n, { jumboable: true }));
@@ -794,7 +940,7 @@
     const id = getAssetIDByName(name);
     return id && TableRowIcon ? /* @__PURE__ */ React.createElement(TableRowIcon, { source: id }) : null;
   }
-  function Switch({ setting, label, subLabel, icon }) {
+  function Switch({ setting, label, subLabel, icon, onChange }) {
     const { TableSwitchRow } = getComponents();
     return /* @__PURE__ */ React.createElement(
       TableSwitchRow,
@@ -803,7 +949,10 @@
         subLabel,
         icon: icon ? /* @__PURE__ */ React.createElement(Icon, { name: icon }) : void 0,
         value: !!storage[setting],
-        onValueChange: (v) => storage[setting] = v
+        onValueChange: (v) => {
+          storage[setting] = v;
+          onChange == null ? void 0 : onChange(v);
+        }
       }
     );
   }
@@ -887,7 +1036,16 @@
         onChange: (v) => storage.hyperLinkText = v != null ? v : "",
         isClearable: true
       }
-    ), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Streaming" }, /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Long messages" }, /* @__PURE__ */ React.createElement(
+      Switch,
+      {
+        setting: "uploadLongMessages",
+        icon: "FileIcon",
+        label: "Upload long messages as files",
+        subLabel: "Instead of the Nitro popup, offer to send messages over the limit as message.txt",
+        onChange: applyLimits
+      }
+    )), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Streaming" }, /* @__PURE__ */ React.createElement(
       Switch,
       {
         setting: "enableStreamQualityBypass",
@@ -990,6 +1148,7 @@
       patchThemes(ctx);
       patchAppIcons(ctx);
       patchSoundboard(ctx);
+      patchLongMessages(ctx);
       logger.log("[FakeNitro] loaded");
     },
     onUnload() {

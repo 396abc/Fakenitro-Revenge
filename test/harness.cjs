@@ -49,6 +49,7 @@ const Stores = {
 	StickersStore: { getName: () => 'StickersStore', getStickerById: stickerById },
 	EmojiStore: { getName: () => 'EmojiStore', getCustomEmojiById: id => emojis[id] },
 	SelectedGuildStore: { getName: () => 'SelectedGuildStore', getGuildId: () => CURRENT_GUILD },
+	DraftStore: { getName: () => 'DraftStore', getDraft: () => draftText },
 }
 
 const EmojiUtils = {
@@ -75,6 +76,28 @@ const ProductCatalog = {
 }
 
 const sent = []
+
+// Long message upload: Discord's limits, HTTP module, the upload server and the chat box
+let draftText = ''
+const Limits = { MAX_MESSAGE_LENGTH: 2000, MAX_MESSAGE_LENGTH_PREMIUM: 4000 }
+const httpCalls = []
+let failUpload = false
+const HTTP = {
+	post(opts) {
+		httpCalls.push(['post', opts.url, JSON.parse(JSON.stringify(opts.body))])
+		if (opts.url.endsWith('/attachments')) {
+			return Promise.resolve({ body: { attachments: [{ id: '0', upload_url: 'https://upload.example/abc', upload_filename: 'uploads/abc/message.txt' }] } })
+		}
+		return Promise.resolve({ body: { id: 'm1' } })
+	},
+}
+global.fetch = (url, opts) => {
+	httpCalls.push(['put', url, opts.method, opts.body])
+	return Promise.resolve({ ok: !failUpload, status: failUpload ? 403 : 200 })
+}
+const inserted = []
+const ChatInputs = { getBestActiveInputForChannelId: () => ({ insertText: t => inserted.push(t) }) }
+const toasts = []
 const MessageActions = {
 	sendMessage(channelId, data) { sent.push(['send', channelId, JSON.parse(JSON.stringify(data))]); return Promise.resolve('sent') },
 	editMessage(channelId, id, data) { sent.push(['edit', channelId, JSON.parse(JSON.stringify(data))]); return Promise.resolve('edited') },
@@ -111,6 +134,9 @@ const byProps = {
 	updateBackgroundGradientPreset: ThemeActions,
 	MasterAppIconIds: AppIconTypes,
 	getIcons: AppIconUtils,
+	MAX_MESSAGE_LENGTH: Limits,
+	HTTP: { HTTP },
+	getBestActiveInputForChannelId: ChatInputs,
 }
 const byPath = {
 	'modules/emojis/EmojiConstants.tsx': { EmojiIntention },
@@ -206,7 +232,7 @@ const vendetta = {
 		common: { React, ReactNative: { ScrollView: mk('ScrollView') }, FluxDispatcher },
 	},
 	storage: { useProxy },
-	ui: { assets: { getAssetIDByName: () => 1 } },
+	ui: { assets: { getAssetIDByName: () => 1 }, toasts: { showToast: t => toasts.push(t) } },
 }
 global.bunny = {
 	metro: { findByFilePath: (p) => byPath[p], common: { components } },
@@ -231,7 +257,7 @@ const EMOJI = id => {
 	await test('all patch groups applied', () => {
 		const failed = logs.filter(l => l[0] === 'error')
 		assert.deepStrictEqual(failed, [], JSON.stringify(failed))
-		for (const g of ['premium checks', 'emoji availability', 'emoji picker', 'sticker picker', 'send/edit/sticker bypass', 'message rendering', 'client themes', 'app icons', 'soundboard'])
+		for (const g of ['premium checks', 'emoji availability', 'emoji picker', 'sticker picker', 'send/edit/sticker bypass', 'message rendering', 'client themes', 'app icons', 'soundboard', 'long messages'])
 			assert(logs.some(l => l[1] === `[FakeNitro] ${g}: ok`), g)
 	})
 
@@ -490,7 +516,7 @@ const EMOJI = id => {
 		TestRenderer.act(() => { tr = TestRenderer.create(React.createElement(plugin.settings)) })
 		const switches = tr.root.findAll(n => n.type && n.type.displayName === 'TableSwitchRow')
 		const labels = switches.map(s => s.props.label)
-		for (const l of ['Enable emoji bypass', 'Transform emojis', 'Enable sticker bypass', 'Transform stickers', 'Transform compound sentences', 'Use hyperlinks', 'Disable embed permission check', 'Stream quality bypass', 'Nitro themes', 'Nitro app icons', 'Soundboard'])
+		for (const l of ['Enable emoji bypass', 'Transform emojis', 'Enable sticker bypass', 'Transform stickers', 'Transform compound sentences', 'Use hyperlinks', 'Disable embed permission check', 'Stream quality bypass', 'Nitro themes', 'Nitro app icons', 'Soundboard', 'Upload long messages as files'])
 			assert(labels.includes(l), 'missing ' + l)
 		const radios = tr.root.findAll(n => n.type && n.type.displayName === 'TableRadioGroup')
 		assert.strictEqual(radios.length, 2)
@@ -504,12 +530,104 @@ const EMOJI = id => {
 		storage.emojiSize = 48
 	})
 
+	const pressAlert = async label => {
+		await new Promise(r => setTimeout(r, 0))
+		let tr
+		TestRenderer.act(() => { tr = TestRenderer.create(lastAlert.el) })
+		const btn = tr.root.findAll(n => n.type && n.type.displayName === 'AlertActionButton').find(b => b.props.text === label)
+		assert(btn, 'no button ' + label)
+		btn.props.onPress()
+		await new Promise(r => setTimeout(r, 5))
+	}
+
+	await test('long messages: Discord limits raised so its Nitro popup never shows', () => {
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2 ** 30)
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 2 ** 30)
+	})
+
+	await test('long messages: short message sends normally', async () => {
+		sent.length = 0
+		httpCalls.length = 0
+		lastAlert = null
+		await MessageActions.sendMessage('c1', { content: 'x'.repeat(2000) })
+		assert.strictEqual(sent.length, 1)
+		assert.strictEqual(httpCalls.length, 0)
+		assert.strictEqual(lastAlert, null)
+	})
+
+	await test('long messages: "Upload as file" uploads message.txt as a reply', async () => {
+		sent.length = 0
+		httpCalls.length = 0
+		const text = 'héllo '.repeat(500)
+		const ref = { guild_id: 'g1', channel_id: 'c1', message_id: '42' }
+		const p = MessageActions.sendMessage('c1', { content: text }, false, { messageReference: ref, allowedMentions: { parse: [], replied_user: false } })
+		await pressAlert('Upload as file')
+		await p
+		assert.strictEqual(lastAlert.key, 'fake-nitro-message-too-long')
+		assert.strictEqual(sent.length, 0)
+		assert.deepStrictEqual(httpCalls[0], ['post', '/channels/c1/attachments', { files: [{ id: '0', filename: 'message.txt', file_size: Buffer.byteLength(text) }] }])
+		assert.deepStrictEqual(httpCalls[1], ['put', 'https://upload.example/abc', 'PUT', text])
+		assert.deepStrictEqual(httpCalls[2], ['post', '/channels/c1/messages', {
+			content: '',
+			attachments: [{ id: '0', filename: 'message.txt', uploaded_filename: 'uploads/abc/message.txt' }],
+			message_reference: ref,
+			allowed_mentions: { parse: [], replied_user: false },
+		}])
+	})
+
+	await test('long messages: Cancel sends nothing and puts the text back', async () => {
+		sent.length = 0
+		httpCalls.length = 0
+		inserted.length = 0
+		const text = 'y'.repeat(2500)
+		const p = MessageActions.sendMessage('c1', { content: text })
+		await pressAlert('Cancel')
+		await p
+		assert.strictEqual(sent.length, 0)
+		assert.strictEqual(httpCalls.length, 0)
+		assert.deepStrictEqual(inserted, [text])
+		// Text still in the box: don't paste it twice
+		inserted.length = 0
+		draftText = text
+		const p2 = MessageActions.sendMessage('c1', { content: text })
+		await pressAlert('Cancel')
+		await p2
+		assert.deepStrictEqual(inserted, [])
+		draftText = ''
+	})
+
+	await test('long messages: failed upload shows a toast and keeps the text', async () => {
+		failUpload = true
+		inserted.length = 0
+		toasts.length = 0
+		const text = 'z'.repeat(3000)
+		const p = MessageActions.sendMessage('c1', { content: text })
+		await pressAlert('Upload as file')
+		await p
+		failUpload = false
+		assert(toasts[0] && toasts[0].includes('403'), toasts[0])
+		assert.deepStrictEqual(inserted, [text])
+	})
+
+	await test('long messages: turning the setting off restores Discord limits', () => {
+		let tr
+		TestRenderer.act(() => { tr = TestRenderer.create(React.createElement(plugin.settings)) })
+		const sw = tr.root.findAll(n => n.type && n.type.displayName === 'TableSwitchRow').find(s => s.props.label === 'Upload long messages as files')
+		TestRenderer.act(() => sw.props.onValueChange(false))
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2000)
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 4000)
+		TestRenderer.act(() => sw.props.onValueChange(true))
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2 ** 30)
+	})
+
 	await test('unload restores everything', async () => {
 		plugin.onUnload()
 		assert.strictEqual(ProductCatalog.canUserUse(ProductCatalog.STICKERS_EVERYWHERE), false)
 		assert.strictEqual(EmojiUtils.default.getEmojiUnavailableReason({ emoji: EMOJI(200), channel, intention: 3 }), 1)
 		assert.deepStrictEqual(AppIconTypes.FreemiumAppIconIds, { a: 'free' })
 		assert.strictEqual(intercepts.length, 0)
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2000)
+		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 4000)
 		sent.length = 0
 		await MessageActions.sendMessage('c1', { content: '<:external:300>', validNonShortcutEmojis: [EMOJI(300)] })
 		assert.strictEqual(sent[0][2].content, '<:external:300>')
