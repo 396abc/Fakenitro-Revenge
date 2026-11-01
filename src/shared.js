@@ -80,6 +80,7 @@ export const Stores = {
 	get EmojiStore() { return findStore('EmojiStore') },
 	get SelectedGuildStore() { return findStore('SelectedGuildStore') },
 	get DraftStore() { return findStore('DraftStore') },
+	get MessageStore() { return findStore('MessageStore') },
 }
 
 // Discord permission bits

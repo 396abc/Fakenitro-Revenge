@@ -67,11 +67,11 @@ export function showCannotEmbedNotice() {
 	})
 }
 
-// Replaces Discord's "upgrade to Nitro" popup. Resolves true if the user wants to upload.
+// Replaces Discord's "upgrade to Nitro" popup. Resolves true if the user wants it as a file.
 export function showMessageTooLongNotice(length, limit) {
 	return confirm('fake-nitro-message-too-long', {
 		title: 'Message too long',
-		content: `Your message is ${length.toLocaleString()} characters, the limit is ${limit.toLocaleString()}. You can send it as a file instead.`,
+		content: `Your message is ${length.toLocaleString()} characters, the limit is ${limit.toLocaleString()}. You can attach it as a file instead.`,
 		buttons: [
 			{ text: 'Upload as file', variant: 'primary', value: true },
 			{ text: 'Cancel', variant: 'secondary', value: false },

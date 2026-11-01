@@ -47,6 +47,7 @@ const Stores = {
 		can: perm => (perm === BigInt(1) << BigInt(14) ? canEmbed : false),
 	},
 	StickersStore: { getName: () => 'StickersStore', getStickerById: stickerById },
+	MessageStore: { getName: () => 'MessageStore', getMessage: (c, id) => (id === '42' ? repliedTo : undefined) },
 	EmojiStore: { getName: () => 'EmojiStore', getCustomEmojiById: id => emojis[id] },
 	SelectedGuildStore: { getName: () => 'SelectedGuildStore', getGuildId: () => CURRENT_GUILD },
 	DraftStore: { getName: () => 'DraftStore', getDraft: () => draftText },
@@ -77,24 +78,22 @@ const ProductCatalog = {
 
 const sent = []
 
-// Long message upload: Discord's limits, HTTP module, the upload server and the chat box
+// Long messages: Discord's limits, the native file module and the chat box
 let draftText = ''
 const Limits = { MAX_MESSAGE_LENGTH: 2000, MAX_MESSAGE_LENGTH_PREMIUM: 4000 }
-const httpCalls = []
-let failUpload = false
-const HTTP = {
-	post(opts) {
-		httpCalls.push(['post', opts.url, JSON.parse(JSON.stringify(opts.body))])
-		if (opts.url.endsWith('/attachments')) {
-			return Promise.resolve({ body: { attachments: [{ id: '0', upload_url: 'https://upload.example/abc', upload_filename: 'uploads/abc/message.txt' }] } })
-		}
-		return Promise.resolve({ body: { id: 'm1' } })
+const written = []
+let failWrite = false
+global.nativeModuleProxy = {
+	NativeFileModule: {
+		writeFile(dir, path, data, encoding) {
+			if (failWrite) return Promise.reject(new Error('disk full'))
+			written.push([dir, path, data, encoding])
+			return Promise.resolve(`/data/cache/${path}`)
+		},
+		getConstants: () => ({ CacheDirPath: '/data/cache' }),
 	},
 }
-global.fetch = (url, opts) => {
-	httpCalls.push(['put', url, opts.method, opts.body])
-	return Promise.resolve({ ok: !failUpload, status: failUpload ? 403 : 200 })
-}
+const repliedTo = { id: '42', channel_id: 'c1', content: 'hi' }
 const inserted = []
 const ChatInputs = { getBestActiveInputForChannelId: () => ({ insertText: t => inserted.push(t) }) }
 const toasts = []
@@ -135,7 +134,6 @@ const byProps = {
 	MasterAppIconIds: AppIconTypes,
 	getIcons: AppIconUtils,
 	MAX_MESSAGE_LENGTH: Limits,
-	HTTP: { HTTP },
 	getBestActiveInputForChannelId: ChatInputs,
 }
 const byPath = {
@@ -545,46 +543,69 @@ const EMOJI = id => {
 		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 2 ** 30)
 	})
 
+	const addFiles = () => dispatched.filter(d => d.type === 'UPLOAD_ATTACHMENT_ADD_FILES')
+
 	await test('long messages: short message sends normally', async () => {
 		sent.length = 0
-		httpCalls.length = 0
+		dispatched.length = 0
 		lastAlert = null
 		await MessageActions.sendMessage('c1', { content: 'x'.repeat(2000) })
 		assert.strictEqual(sent.length, 1)
-		assert.strictEqual(httpCalls.length, 0)
+		assert.strictEqual(addFiles().length, 0)
 		assert.strictEqual(lastAlert, null)
 	})
 
-	await test('long messages: "Upload as file" uploads message.txt as a reply', async () => {
+	await test('long messages: "Upload as file" attaches message.txt to the chat box, not sent', async () => {
 		sent.length = 0
-		httpCalls.length = 0
+		dispatched.length = 0
+		written.length = 0
 		const text = 'héllo '.repeat(500)
-		const ref = { guild_id: 'g1', channel_id: 'c1', message_id: '42' }
-		const p = MessageActions.sendMessage('c1', { content: text }, false, { messageReference: ref, allowedMentions: { parse: [], replied_user: false } })
+		const p = MessageActions.sendMessage('c1', { content: text })
 		await pressAlert('Upload as file')
 		await p
 		assert.strictEqual(lastAlert.key, 'fake-nitro-message-too-long')
-		assert.strictEqual(sent.length, 0)
-		assert.deepStrictEqual(httpCalls[0], ['post', '/channels/c1/attachments', { files: [{ id: '0', filename: 'message.txt', file_size: Buffer.byteLength(text) }] }])
-		assert.deepStrictEqual(httpCalls[1], ['put', 'https://upload.example/abc', 'PUT', text])
-		assert.deepStrictEqual(httpCalls[2], ['post', '/channels/c1/messages', {
-			content: '',
-			attachments: [{ id: '0', filename: 'message.txt', uploaded_filename: 'uploads/abc/message.txt' }],
-			message_reference: ref,
-			allowed_mentions: { parse: [], replied_user: false },
-		}])
+		assert.strictEqual(sent.length, 0, 'nothing is sent')
+		assert.strictEqual(written.length, 1)
+		const [dir, path, data, enc] = written[0]
+		assert.strictEqual(dir, 'cache')
+		assert.match(path, /^fakenitro\/\d+\/message\.txt$/)
+		assert.strictEqual(data, text)
+		assert.strictEqual(enc, 'utf8')
+		const [action] = addFiles()
+		assert(action, 'UPLOAD_ATTACHMENT_ADD_FILES dispatched')
+		assert.strictEqual(action.channelId, 'c1')
+		assert.strictEqual(action.draftType, 0)
+		assert.strictEqual(action.files.length, 1)
+		const f = action.files[0]
+		assert.strictEqual(f.uri, `file:///data/cache/${path}`)
+		assert.strictEqual(f.filename, 'message.txt')
+		assert.strictEqual(f.mimeType, 'text/plain')
+		assert.strictEqual(f.platform, 0)
+	})
+
+	await test('long messages: reply bar is put back after attaching', async () => {
+		dispatched.length = 0
+		const ref = { guild_id: 'g1', channel_id: 'c1', message_id: '42' }
+		const p = MessageActions.sendMessage('c1', { content: 'r'.repeat(2500) }, false, { messageReference: ref, allowedMentions: { parse: [], replied_user: false } })
+		await pressAlert('Upload as file')
+		await p
+		const reply = dispatched.find(d => d.type === 'CREATE_PENDING_REPLY')
+		assert(reply, 'reply restored')
+		assert.strictEqual(reply.message, repliedTo)
+		assert.strictEqual(reply.channel.id, 'c1')
+		assert.strictEqual(reply.shouldMention, false)
 	})
 
 	await test('long messages: Cancel sends nothing and puts the text back', async () => {
 		sent.length = 0
-		httpCalls.length = 0
+		dispatched.length = 0
 		inserted.length = 0
 		const text = 'y'.repeat(2500)
 		const p = MessageActions.sendMessage('c1', { content: text })
 		await pressAlert('Cancel')
 		await p
 		assert.strictEqual(sent.length, 0)
-		assert.strictEqual(httpCalls.length, 0)
+		assert.strictEqual(addFiles().length, 0)
 		assert.deepStrictEqual(inserted, [text])
 		// Text still in the box: don't paste it twice
 		inserted.length = 0
@@ -596,17 +617,19 @@ const EMOJI = id => {
 		draftText = ''
 	})
 
-	await test('long messages: failed upload shows a toast and keeps the text', async () => {
-		failUpload = true
+	await test('long messages: failing to write the file shows a toast and keeps the text', async () => {
+		failWrite = true
 		inserted.length = 0
 		toasts.length = 0
+		dispatched.length = 0
 		const text = 'z'.repeat(3000)
 		const p = MessageActions.sendMessage('c1', { content: text })
 		await pressAlert('Upload as file')
 		await p
-		failUpload = false
-		assert(toasts[0] && toasts[0].includes('403'), toasts[0])
+		failWrite = false
+		assert(toasts[0] && toasts[0].includes('disk full'), toasts[0])
 		assert.deepStrictEqual(inserted, [text])
+		assert.strictEqual(addFiles().length, 0)
 	})
 
 	await test('long messages: turning the setting off restores Discord limits', () => {

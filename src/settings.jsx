@@ -121,7 +121,7 @@ export default function Settings() {
 						setting="uploadLongMessages"
 						icon="FileIcon"
 						label="Upload long messages as files"
-						subLabel="Instead of the Nitro popup, offer to send messages over the limit as message.txt"
+						subLabel="Instead of the Nitro popup, offer to attach messages over the limit as message.txt"
 						onChange={applyLimits}
 					/>
 				</TableRowGroup>

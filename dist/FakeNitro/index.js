@@ -141,6 +141,9 @@
     },
     get DraftStore() {
       return findStore("DraftStore");
+    },
+    get MessageStore() {
+      return findStore("MessageStore");
     }
   };
   var Permissions = {
@@ -351,7 +354,7 @@
   function showMessageTooLongNotice(length, limit) {
     return confirm("fake-nitro-message-too-long", {
       title: "Message too long",
-      content: `Your message is ${length.toLocaleString()} characters, the limit is ${limit.toLocaleString()}. You can send it as a file instead.`,
+      content: `Your message is ${length.toLocaleString()} characters, the limit is ${limit.toLocaleString()}. You can attach it as a file instead.`,
       buttons: [
         { text: "Upload as file", variant: "primary", value: true },
         { text: "Cancel", variant: "secondary", value: false }
@@ -655,6 +658,7 @@
   // src/longMessages.js
   var FILE_NAME = "message.txt";
   var NO_LIMIT = 1073741824;
+  var DRAFT_TYPE_CHANNEL_MESSAGE = 0;
   var Limits;
   var original;
   var realLimit = () => premiumType() === 2 ? 4e3 : 2e3;
@@ -664,43 +668,58 @@
     Limits.MAX_MESSAGE_LENGTH = raise ? NO_LIMIT : original.normal;
     Limits.MAX_MESSAGE_LENGTH_PREMIUM = raise ? NO_LIMIT : original.premium;
   }
-  function utf8Length(str) {
-    let n = 0;
-    for (const ch of str) {
-      const c = ch.codePointAt(0);
-      n += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;
+  function getFileModule() {
+    var _a, _b, _c;
+    for (const name of ["NativeFileModule", "RTNFileManager", "DCDFileManager"]) {
+      const mod = (_c = (_a = globalThis.__turboModuleProxy) == null ? void 0 : _a.call(globalThis, name)) != null ? _c : (_b = globalThis.nativeModuleProxy) == null ? void 0 : _b[name];
+      if (mod) return mod;
     }
-    return n;
   }
-  function getHTTP() {
-    var _a, _b;
-    return (_b = (_a = findProps("HTTP")) == null ? void 0 : _a.HTTP) != null ? _b : findProps("getAPIBaseURL", "post");
-  }
-  function uploadAsFile(channelId, content, options) {
+  function attachAsFile(channelId, content) {
     return __async(this, null, function* () {
-      var _a;
-      const HTTP = getHTTP();
-      if (!HTTP) throw new Error("HTTP module not found");
-      const { body } = yield HTTP.post({
-        url: `/channels/${channelId}/attachments`,
-        body: { files: [{ id: "0", filename: FILE_NAME, file_size: utf8Length(content) }] }
+      var _a, _b;
+      const fs = getFileModule();
+      if (!(fs == null ? void 0 : fs.writeFile)) throw new Error("native file module not found");
+      const path = `fakenitro/${Date.now()}/${FILE_NAME}`;
+      const written = yield fs.writeFile("cache", path, content, "utf8");
+      const cacheDir = ((_b = (_a = fs.getConstants) == null ? void 0 : _a.call(fs)) != null ? _b : fs).CacheDirPath;
+      const fullPath = typeof written === "string" && written.startsWith("/") ? written : `${cacheDir}/${path}`;
+      const uri = `file://${fullPath}`;
+      FluxDispatcher.dispatch({
+        type: "UPLOAD_ATTACHMENT_ADD_FILES",
+        channelId,
+        draftType: DRAFT_TYPE_CHANNEL_MESSAGE,
+        files: [
+          {
+            id: uri,
+            origin: 1,
+            uri,
+            originalUri: uri,
+            mimeType: "text/plain",
+            filename: FILE_NAME,
+            platform: 0,
+            createdUsingInAppCamera: false
+          }
+        ]
       });
-      const target = (_a = body == null ? void 0 : body.attachments) == null ? void 0 : _a[0];
-      if (!(target == null ? void 0 : target.upload_url)) throw new Error("Discord did not return an upload URL");
-      const res = yield fetch(target.upload_url, { method: "PUT", body: content });
-      if (!res.ok) throw new Error(`File upload failed (${res.status})`);
-      const message = {
-        content: "",
-        attachments: [{ id: "0", filename: FILE_NAME, uploaded_filename: target.upload_filename }]
-      };
-      if (options == null ? void 0 : options.messageReference) message.message_reference = options.messageReference;
-      if (options == null ? void 0 : options.allowedMentions) message.allowed_mentions = options.allowedMentions;
-      yield HTTP.post({ url: `/channels/${channelId}/messages`, body: message });
+    });
+  }
+  function restoreReply(channelId, options) {
+    var _a, _b, _c, _d, _e;
+    const ref = options == null ? void 0 : options.messageReference;
+    const message = ref && ((_c = (_a = Stores.MessageStore) == null ? void 0 : _a.getMessage) == null ? void 0 : _c.call(_a, (_b = ref.channel_id) != null ? _b : channelId, ref.message_id));
+    const channel = (_d = Stores.ChannelStore) == null ? void 0 : _d.getChannel(channelId);
+    if (!message || !channel) return;
+    FluxDispatcher.dispatch({
+      type: "CREATE_PENDING_REPLY",
+      channel,
+      message,
+      shouldMention: ((_e = options.allowedMentions) == null ? void 0 : _e.replied_user) !== false
     });
   }
   function restoreText(channelId, content) {
     var _a, _b, _c, _d;
-    const draft = (_b = (_a = Stores.DraftStore) == null ? void 0 : _a.getDraft) == null ? void 0 : _b.call(_a, channelId, 0);
+    const draft = (_b = (_a = Stores.DraftStore) == null ? void 0 : _a.getDraft) == null ? void 0 : _b.call(_a, channelId, DRAFT_TYPE_CHANNEL_MESSAGE);
     if (draft) return;
     (_d = (_c = findProps("getBestActiveInputForChannelId")) == null ? void 0 : _c.getBestActiveInputForChannelId(channelId)) == null ? void 0 : _d.insertText(content);
   }
@@ -725,12 +744,17 @@
             return orig.apply(this, args);
           }
           return showMessageTooLongNotice(content.length, limit).then((upload) => {
-            if (!upload) return restoreText(channelId, content);
-            return uploadAsFile(channelId, content, options).catch((e) => {
-              var _a;
-              logger.error("[FakeNitro] long message upload failed", e);
-              vendetta.ui.toasts.showToast(`Couldn't upload message: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+            if (!upload) {
               restoreText(channelId, content);
+              restoreReply(channelId, options);
+              return;
+            }
+            return attachAsFile(channelId, content).then(() => restoreReply(channelId, options)).catch((e) => {
+              var _a;
+              logger.error("[FakeNitro] attaching long message failed", e);
+              vendetta.ui.toasts.showToast(`Couldn't attach message: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+              restoreText(channelId, content);
+              restoreReply(channelId, options);
             });
           });
         })
@@ -1042,7 +1066,7 @@
         setting: "uploadLongMessages",
         icon: "FileIcon",
         label: "Upload long messages as files",
-        subLabel: "Instead of the Nitro popup, offer to send messages over the limit as message.txt",
+        subLabel: "Instead of the Nitro popup, offer to attach messages over the limit as message.txt",
         onChange: applyLimits
       }
     )), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Streaming" }, /* @__PURE__ */ React.createElement(

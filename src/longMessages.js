@@ -1,11 +1,13 @@
-// Messages over the length limit get sent as message.txt instead, like on desktop.
+// Messages over the length limit can be turned into a message.txt attachment, like on desktop.
 // Discord's own limit is raised so it doesn't block the message with its Nitro popup,
-// then sendMessage checks the real limit and offers to upload the text as a file.
+// then sendMessage checks the real limit and offers to attach the text as a file instead.
+// The file goes into the chat box's upload tray, so it's only sent when the user hits send.
 import { showMessageTooLongNotice } from './alerts'
-import { addUnpatch, findProps, logger, premiumType, Stores, storage } from './shared'
+import { addUnpatch, findProps, FluxDispatcher, logger, premiumType, Stores, storage } from './shared'
 
 const FILE_NAME = 'message.txt'
 const NO_LIMIT = 1073741824 // 2^30, effectively no limit
+const DRAFT_TYPE_CHANNEL_MESSAGE = 0
 
 let Limits
 let original
@@ -20,48 +22,63 @@ export function applyLimits() {
 	Limits.MAX_MESSAGE_LENGTH_PREMIUM = raise ? NO_LIMIT : original.premium
 }
 
-function utf8Length(str) {
-	let n = 0
-	for (const ch of str) {
-		const c = ch.codePointAt(0)
-		n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4
+// Discord's native file module, found the same way Revenge finds it
+function getFileModule() {
+	for (const name of ['NativeFileModule', 'RTNFileManager', 'DCDFileManager']) {
+		const mod = globalThis.__turboModuleProxy?.(name) ?? globalThis.nativeModuleProxy?.[name]
+		if (mod) return mod
 	}
-	return n
 }
 
-function getHTTP() {
-	return findProps('HTTP')?.HTTP ?? findProps('getAPIBaseURL', 'post')
-}
+// Writes the text to Discord's cache folder and adds it to the upload tray, the same way
+// picking a file from your phone does. Each file gets its own folder so it can keep the name message.txt.
+async function attachAsFile(channelId, content) {
+	const fs = getFileModule()
+	if (!fs?.writeFile) throw new Error('native file module not found')
 
-// Same three steps the desktop app uses: ask for an upload URL, upload the file there,
-// then send a message that points at the uploaded file.
-async function uploadAsFile(channelId, content, options) {
-	const HTTP = getHTTP()
-	if (!HTTP) throw new Error('HTTP module not found')
+	const path = `fakenitro/${Date.now()}/${FILE_NAME}`
+	const written = await fs.writeFile('cache', path, content, 'utf8')
+	const cacheDir = (fs.getConstants?.() ?? fs).CacheDirPath
+	const fullPath = typeof written === 'string' && written.startsWith('/') ? written : `${cacheDir}/${path}`
+	const uri = `file://${fullPath}`
 
-	const { body } = await HTTP.post({
-		url: `/channels/${channelId}/attachments`,
-		body: { files: [{ id: '0', filename: FILE_NAME, file_size: utf8Length(content) }] },
+	FluxDispatcher.dispatch({
+		type: 'UPLOAD_ATTACHMENT_ADD_FILES',
+		channelId,
+		draftType: DRAFT_TYPE_CHANNEL_MESSAGE,
+		files: [
+			{
+				id: uri,
+				origin: 1,
+				uri,
+				originalUri: uri,
+				mimeType: 'text/plain',
+				filename: FILE_NAME,
+				platform: 0,
+				createdUsingInAppCamera: false,
+			},
+		],
 	})
-	const target = body?.attachments?.[0]
-	if (!target?.upload_url) throw new Error('Discord did not return an upload URL')
+}
 
-	const res = await fetch(target.upload_url, { method: 'PUT', body: content })
-	if (!res.ok) throw new Error(`File upload failed (${res.status})`)
+// Discord clears the reply bar when it sends, so put it back if this was a reply
+function restoreReply(channelId, options) {
+	const ref = options?.messageReference
+	const message = ref && Stores.MessageStore?.getMessage?.(ref.channel_id ?? channelId, ref.message_id)
+	const channel = Stores.ChannelStore?.getChannel(channelId)
+	if (!message || !channel) return
 
-	const message = {
-		content: '',
-		attachments: [{ id: '0', filename: FILE_NAME, uploaded_filename: target.upload_filename }],
-	}
-	if (options?.messageReference) message.message_reference = options.messageReference
-	if (options?.allowedMentions) message.allowed_mentions = options.allowedMentions
-
-	await HTTP.post({ url: `/channels/${channelId}/messages`, body: message })
+	FluxDispatcher.dispatch({
+		type: 'CREATE_PENDING_REPLY',
+		channel,
+		message,
+		shouldMention: options.allowedMentions?.replied_user !== false,
+	})
 }
 
 // Put the text back in the chat box so nothing gets lost, unless it's still there
 function restoreText(channelId, content) {
-	const draft = Stores.DraftStore?.getDraft?.(channelId, 0)
+	const draft = Stores.DraftStore?.getDraft?.(channelId, DRAFT_TYPE_CHANNEL_MESSAGE)
 	if (draft) return
 	findProps('getBestActiveInputForChannelId')?.getBestActiveInputForChannelId(channelId)?.insertText(content)
 }
@@ -92,13 +109,20 @@ export function patchLongMessages({ safely }) {
 				}
 
 				return showMessageTooLongNotice(content.length, limit).then(upload => {
-					if (!upload) return restoreText(channelId, content)
-
-					return uploadAsFile(channelId, content, options).catch(e => {
-						logger.error('[FakeNitro] long message upload failed', e)
-						vendetta.ui.toasts.showToast(`Couldn't upload message: ${e?.message ?? e}`)
+					if (!upload) {
 						restoreText(channelId, content)
-					})
+						restoreReply(channelId, options)
+						return
+					}
+
+					return attachAsFile(channelId, content)
+						.then(() => restoreReply(channelId, options))
+						.catch(e => {
+							logger.error('[FakeNitro] attaching long message failed', e)
+							vendetta.ui.toasts.showToast(`Couldn't attach message: ${e?.message ?? e}`)
+							restoreText(channelId, content)
+							restoreReply(channelId, options)
+						})
 				})
 			}),
 		)
