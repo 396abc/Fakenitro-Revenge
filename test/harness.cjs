@@ -273,7 +273,7 @@ const EMOJI = id => {
 	await test('all patch groups applied', () => {
 		const failed = logs.filter(l => l[0] === 'error')
 		assert.deepStrictEqual(failed, [], JSON.stringify(failed))
-		for (const g of ['premium checks', 'emoji availability', 'emoji picker', 'sticker picker', 'send/edit/sticker bypass', 'message rendering', 'client themes', 'app icons', 'soundboard', 'long messages'])
+		for (const g of ['premium checks', 'emoji availability', 'emoji picker', 'sticker picker', 'send/edit/sticker bypass', 'message rendering', 'client themes', 'app icons', 'soundboard', 'long messages: send check', 'long messages: limit', 'long messages: limit hook', 'long messages: char counter'])
 			assert(logs.some(l => l[1] === `[FakeNitro] ${g}: ok`), g)
 	})
 

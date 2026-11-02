@@ -22,42 +22,44 @@ function realLimit() {
 	return premiumType() === 2 ? 4000 : 2000
 }
 
-function patchLimit() {
-	const mod = findPath('modules/messages/useMessageMaxLength.tsx')
-	if (!mod?.getMaxMessageLength) throw new Error('useMessageMaxLength not found')
+let MaxLength
 
-	const { instead } = vendetta.patcher
-	const orig = mod.getMaxMessageLength
-	getRealLimit = () => orig.call(mod)
+// Discord's chat box asks this module for the limit before it sends. Report "no limit"
+// so it doesn't show its Nitro popup, and keep the original to know the real limit.
+function patchLimit() {
+	MaxLength = findPath('modules/messages/useMessageMaxLength.tsx')
+	if (!MaxLength?.getMaxMessageLength) throw new Error('useMessageMaxLength not found')
+
+	const orig = MaxLength.getMaxMessageLength
+	getRealLimit = () => orig.call(MaxLength)
 
 	addUnpatch(
 		() => (getRealLimit = undefined),
-		instead('getMaxMessageLength', mod, function (args, fn) {
+		vendetta.patcher.instead('getMaxMessageLength', MaxLength, function (args, fn) {
 			return storage.uploadLongMessages ? NO_LIMIT : fn.apply(this, args)
 		}),
 	)
+}
 
-	// The hook has to run every time so React's hook order stays the same
-	if (typeof mod.default === 'function') {
-		try {
-			addUnpatch(
-				instead('default', mod, function (args, fn) {
-					const limit = fn.apply(this, args)
-					return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit
-				}),
-			)
-		} catch (e) {
-			logger.warn('[FakeNitro] could not patch useMessageMaxLength hook', e)
-		}
-	}
-
-	// Let the counter see the real limit, whether it asks the hook itself or gets it as a prop
-	const Counter = findPath('modules/chat_input/native/accessories/ChatInputCharCounter.tsx')?.default
-	const target = Counter?.type ? Counter : null
-	if (!target) return logger.warn('[FakeNitro] ChatInputCharCounter not found, counter may be hidden')
+// Same for the hook version. It still has to run every time so React's hook order stays the same.
+function patchLimitHook() {
+	if (typeof MaxLength?.default !== 'function') throw new Error('useMessageMaxLength hook not found')
 
 	addUnpatch(
-		instead('type', target, function (args, fn) {
+		vendetta.patcher.instead('default', MaxLength, function (args, fn) {
+			const limit = fn.apply(this, args)
+			return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit
+		}),
+	)
+}
+
+// Let the counter see the real limit, whether it asks the hook itself or gets it as a prop
+function patchCounter() {
+	const Counter = findPath('modules/chat_input/native/accessories/ChatInputCharCounter.tsx')?.default
+	if (!Counter?.type) throw new Error('ChatInputCharCounter not found')
+
+	addUnpatch(
+		vendetta.patcher.instead('type', Counter, function (args, fn) {
 			const props = args[0]
 			if (storage.uploadLongMessages && props && typeof props === 'object') {
 				const fixed = {}
@@ -135,40 +137,46 @@ function restoreText(channelId, content) {
 	findProps('getBestActiveInputForChannelId')?.getBestActiveInputForChannelId(channelId)?.insertText(content)
 }
 
-export function patchLongMessages({ safely }) {
-	safely('long messages', () => {
-		patchLimit()
+// Catch messages over the real limit before they're sent
+function patchSend() {
+	const Actions = findProps('sendMessage', 'editMessage')
+	if (!Actions) throw new Error('MessageActionCreators not found')
 
-		const Actions = findProps('sendMessage', 'editMessage')
-		if (!Actions) throw new Error('MessageActionCreators not found')
+	addUnpatch(
+		vendetta.patcher.instead('sendMessage', Actions, function (args, orig) {
+			const [channelId, message, , options] = args
+			const content = message?.content
+			const limit = realLimit()
 
-		addUnpatch(
-			vendetta.patcher.instead('sendMessage', Actions, function (args, orig) {
-				const [channelId, message, , options] = args
-				const content = message?.content
-				const limit = realLimit()
+			if (!storage.uploadLongMessages || typeof content !== 'string' || content.length <= limit) {
+				return orig.apply(this, args)
+			}
 
-				if (!storage.uploadLongMessages || typeof content !== 'string' || content.length <= limit) {
-					return orig.apply(this, args)
+			return showMessageTooLongNotice(content.length, limit).then(upload => {
+				if (!upload) {
+					restoreText(channelId, content)
+					restoreReply(channelId, options)
+					return
 				}
 
-				return showMessageTooLongNotice(content.length, limit).then(upload => {
-					if (!upload) {
+				return attachAsFile(channelId, content)
+					.then(() => restoreReply(channelId, options))
+					.catch(e => {
+						logger.error('[FakeNitro] attaching long message failed', e)
+						vendetta.ui.toasts.showToast(`Couldn't attach message: ${e?.message ?? e}`)
 						restoreText(channelId, content)
 						restoreReply(channelId, options)
-						return
-					}
+					})
+			})
+		}),
+	)
+}
 
-					return attachAsFile(channelId, content)
-						.then(() => restoreReply(channelId, options))
-						.catch(e => {
-							logger.error('[FakeNitro] attaching long message failed', e)
-							vendetta.ui.toasts.showToast(`Couldn't attach message: ${e?.message ?? e}`)
-							restoreText(channelId, content)
-							restoreReply(channelId, options)
-						})
-				})
-			}),
-		)
-	})
+// Each part is separate so one failing doesn't take the rest down. The send check goes first,
+// since without it long messages would just fail to send.
+export function patchLongMessages({ safely }) {
+	safely('long messages: send check', patchSend)
+	safely('long messages: limit', patchLimit)
+	safely('long messages: limit hook', patchLimitHook)
+	safely('long messages: char counter', patchCounter)
 }

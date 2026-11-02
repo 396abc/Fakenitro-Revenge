@@ -669,36 +669,34 @@
     }
     return premiumType() === 2 ? 4e3 : 2e3;
   }
+  var MaxLength;
   function patchLimit() {
-    var _a;
-    const mod = findPath("modules/messages/useMessageMaxLength.tsx");
-    if (!(mod == null ? void 0 : mod.getMaxMessageLength)) throw new Error("useMessageMaxLength not found");
-    const { instead: instead2 } = vendetta.patcher;
-    const orig = mod.getMaxMessageLength;
-    getRealLimit = () => orig.call(mod);
+    MaxLength = findPath("modules/messages/useMessageMaxLength.tsx");
+    if (!(MaxLength == null ? void 0 : MaxLength.getMaxMessageLength)) throw new Error("useMessageMaxLength not found");
+    const orig = MaxLength.getMaxMessageLength;
+    getRealLimit = () => orig.call(MaxLength);
     addUnpatch(
       () => getRealLimit = void 0,
-      instead2("getMaxMessageLength", mod, function(args, fn) {
+      vendetta.patcher.instead("getMaxMessageLength", MaxLength, function(args, fn) {
         return storage.uploadLongMessages ? NO_LIMIT : fn.apply(this, args);
       })
     );
-    if (typeof mod.default === "function") {
-      try {
-        addUnpatch(
-          instead2("default", mod, function(args, fn) {
-            const limit = fn.apply(this, args);
-            return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit;
-          })
-        );
-      } catch (e) {
-        logger.warn("[FakeNitro] could not patch useMessageMaxLength hook", e);
-      }
-    }
-    const Counter = (_a = findPath("modules/chat_input/native/accessories/ChatInputCharCounter.tsx")) == null ? void 0 : _a.default;
-    const target = (Counter == null ? void 0 : Counter.type) ? Counter : null;
-    if (!target) return logger.warn("[FakeNitro] ChatInputCharCounter not found, counter may be hidden");
+  }
+  function patchLimitHook() {
+    if (typeof (MaxLength == null ? void 0 : MaxLength.default) !== "function") throw new Error("useMessageMaxLength hook not found");
     addUnpatch(
-      instead2("type", target, function(args, fn) {
+      vendetta.patcher.instead("default", MaxLength, function(args, fn) {
+        const limit = fn.apply(this, args);
+        return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit;
+      })
+    );
+  }
+  function patchCounter() {
+    var _a;
+    const Counter = (_a = findPath("modules/chat_input/native/accessories/ChatInputCharCounter.tsx")) == null ? void 0 : _a.default;
+    if (!(Counter == null ? void 0 : Counter.type)) throw new Error("ChatInputCharCounter not found");
+    addUnpatch(
+      vendetta.patcher.instead("type", Counter, function(args, fn) {
         const props = args[0];
         if (storage.uploadLongMessages && props && typeof props === "object") {
           const fixed = {};
@@ -769,36 +767,39 @@
     if (draft) return;
     (_d = (_c = findProps("getBestActiveInputForChannelId")) == null ? void 0 : _c.getBestActiveInputForChannelId(channelId)) == null ? void 0 : _d.insertText(content);
   }
-  function patchLongMessages({ safely: safely2 }) {
-    safely2("long messages", () => {
-      patchLimit();
-      const Actions = findProps("sendMessage", "editMessage");
-      if (!Actions) throw new Error("MessageActionCreators not found");
-      addUnpatch(
-        vendetta.patcher.instead("sendMessage", Actions, function(args, orig) {
-          const [channelId, message, , options] = args;
-          const content = message == null ? void 0 : message.content;
-          const limit = realLimit();
-          if (!storage.uploadLongMessages || typeof content !== "string" || content.length <= limit) {
-            return orig.apply(this, args);
+  function patchSend() {
+    const Actions = findProps("sendMessage", "editMessage");
+    if (!Actions) throw new Error("MessageActionCreators not found");
+    addUnpatch(
+      vendetta.patcher.instead("sendMessage", Actions, function(args, orig) {
+        const [channelId, message, , options] = args;
+        const content = message == null ? void 0 : message.content;
+        const limit = realLimit();
+        if (!storage.uploadLongMessages || typeof content !== "string" || content.length <= limit) {
+          return orig.apply(this, args);
+        }
+        return showMessageTooLongNotice(content.length, limit).then((upload) => {
+          if (!upload) {
+            restoreText(channelId, content);
+            restoreReply(channelId, options);
+            return;
           }
-          return showMessageTooLongNotice(content.length, limit).then((upload) => {
-            if (!upload) {
-              restoreText(channelId, content);
-              restoreReply(channelId, options);
-              return;
-            }
-            return attachAsFile(channelId, content).then(() => restoreReply(channelId, options)).catch((e) => {
-              var _a;
-              logger.error("[FakeNitro] attaching long message failed", e);
-              vendetta.ui.toasts.showToast(`Couldn't attach message: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
-              restoreText(channelId, content);
-              restoreReply(channelId, options);
-            });
+          return attachAsFile(channelId, content).then(() => restoreReply(channelId, options)).catch((e) => {
+            var _a;
+            logger.error("[FakeNitro] attaching long message failed", e);
+            vendetta.ui.toasts.showToast(`Couldn't attach message: ${(_a = e == null ? void 0 : e.message) != null ? _a : e}`);
+            restoreText(channelId, content);
+            restoreReply(channelId, options);
           });
-        })
-      );
-    });
+        });
+      })
+    );
+  }
+  function patchLongMessages({ safely: safely2 }) {
+    safely2("long messages: send check", patchSend);
+    safely2("long messages: limit", patchLimit);
+    safely2("long messages: limit hook", patchLimitHook);
+    safely2("long messages: char counter", patchCounter);
   }
 
   // src/realify.js
