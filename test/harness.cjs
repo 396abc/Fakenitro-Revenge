@@ -80,7 +80,24 @@ const sent = []
 
 // Long messages: Discord's limits, the native file module and the chat box
 let draftText = ''
-const Limits = { MAX_MESSAGE_LENGTH: 2000, MAX_MESSAGE_LENGTH_PREMIUM: 4000 }
+// Discord's message length module (a hook + a plain getter) and the character counter
+let userLimit = 2000
+const MaxLength = {
+	default: function useMessageMaxLength() { return userLimit },
+	getMaxMessageLength() { return userLimit },
+}
+let counterSaw = null
+const CharCounterModule = {
+	default: {
+		$$typeof: Symbol.for('react.memo'),
+		compare: null,
+		// Real counter reads the limit from the hook and/or a prop
+		type: function ChatInputCharCounter(props) {
+			counterSaw = { prop: props.maxLength, hook: MaxLength.default() }
+			return null
+		},
+	},
+}
 const written = []
 let failWrite = false
 global.nativeModuleProxy = {
@@ -133,10 +150,11 @@ const byProps = {
 	updateBackgroundGradientPreset: ThemeActions,
 	MasterAppIconIds: AppIconTypes,
 	getIcons: AppIconUtils,
-	MAX_MESSAGE_LENGTH: Limits,
 	getBestActiveInputForChannelId: ChatInputs,
 }
 const byPath = {
+	'modules/messages/useMessageMaxLength.tsx': MaxLength,
+	'modules/chat_input/native/accessories/ChatInputCharCounter.tsx': CharCounterModule,
 	'modules/emojis/EmojiConstants.tsx': { EmojiIntention },
 	'modules/emoji_picker/native/components/EmojiPickerList.tsx': EmojiPickerListModule,
 	'modules/stickers/native/StickerPickerListRow.tsx': StickerPickerListRowModule,
@@ -538,9 +556,34 @@ const EMOJI = id => {
 		await new Promise(r => setTimeout(r, 5))
 	}
 
-	await test('long messages: Discord limits raised so its Nitro popup never shows', () => {
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2 ** 30)
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 2 ** 30)
+	const NO_LIMIT = 1073741824
+
+	await test('long messages: Discord sees no limit, so its Nitro popup never shows', () => {
+		assert.strictEqual(MaxLength.getMaxMessageLength(), NO_LIMIT)
+		assert.strictEqual(MaxLength.default(), NO_LIMIT)
+	})
+
+	await test('long messages: character counter still gets the real limit', () => {
+		counterSaw = null
+		CharCounterModule.default.type({ maxLength: MaxLength.default(), length: 1800 })
+		assert.deepStrictEqual(counterSaw, { prop: 2000, hook: 2000 })
+		// and only while it's drawing
+		assert.strictEqual(MaxLength.default(), NO_LIMIT)
+		// Nitro users get their 4000
+		userLimit = 4000
+		CharCounterModule.default.type({ maxLength: MaxLength.default() })
+		assert.deepStrictEqual(counterSaw, { prop: 4000, hook: 4000 })
+		userLimit = 2000
+	})
+
+	await test('long messages: Nitro users only get the popup past 4000', async () => {
+		userLimit = 4000
+		sent.length = 0
+		lastAlert = null
+		await MessageActions.sendMessage('c1', { content: 'n'.repeat(3500) })
+		assert.strictEqual(sent.length, 1)
+		assert.strictEqual(lastAlert, null)
+		userLimit = 2000
 	})
 
 	const addFiles = () => dispatched.filter(d => d.type === 'UPLOAD_ATTACHMENT_ADD_FILES')
@@ -632,15 +675,15 @@ const EMOJI = id => {
 		assert.strictEqual(addFiles().length, 0)
 	})
 
-	await test('long messages: turning the setting off restores Discord limits', () => {
+	await test('long messages: turning the setting off gives Discord its limit back', () => {
 		let tr
 		TestRenderer.act(() => { tr = TestRenderer.create(React.createElement(plugin.settings)) })
 		const sw = tr.root.findAll(n => n.type && n.type.displayName === 'TableSwitchRow').find(s => s.props.label === 'Upload long messages as files')
 		TestRenderer.act(() => sw.props.onValueChange(false))
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2000)
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 4000)
+		assert.strictEqual(MaxLength.getMaxMessageLength(), 2000)
+		assert.strictEqual(MaxLength.default(), 2000)
 		TestRenderer.act(() => sw.props.onValueChange(true))
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2 ** 30)
+		assert.strictEqual(MaxLength.getMaxMessageLength(), NO_LIMIT)
 	})
 
 	await test('unload restores everything', async () => {
@@ -649,8 +692,11 @@ const EMOJI = id => {
 		assert.strictEqual(EmojiUtils.default.getEmojiUnavailableReason({ emoji: EMOJI(200), channel, intention: 3 }), 1)
 		assert.deepStrictEqual(AppIconTypes.FreemiumAppIconIds, { a: 'free' })
 		assert.strictEqual(intercepts.length, 0)
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH, 2000)
-		assert.strictEqual(Limits.MAX_MESSAGE_LENGTH_PREMIUM, 4000)
+		assert.strictEqual(MaxLength.getMaxMessageLength(), 2000)
+		assert.strictEqual(MaxLength.default(), 2000)
+		counterSaw = null
+		CharCounterModule.default.type({ maxLength: 2000 })
+		assert.deepStrictEqual(counterSaw, { prop: 2000, hook: 2000 })
 		sent.length = 0
 		await MessageActions.sendMessage('c1', { content: '<:external:300>', validNonShortcutEmojis: [EMOJI(300)] })
 		assert.strictEqual(sent[0][2].content, '<:external:300>')

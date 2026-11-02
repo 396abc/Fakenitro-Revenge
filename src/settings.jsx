@@ -1,6 +1,5 @@
 // Settings page. Same options as the Vencord plugin, built with Discord's own mobile components.
 import { getComponents } from './components'
-import { applyLimits } from './longMessages'
 import { DEFAULTS, MEDIA_SIZES, React, ReactNative, storage } from './shared'
 
 const { ScrollView } = ReactNative
@@ -122,7 +121,6 @@ export default function Settings() {
 						icon="FileIcon"
 						label="Upload long messages as files"
 						subLabel="Instead of the Nitro popup, offer to attach messages over the limit as message.txt"
-						onChange={applyLimits}
 					/>
 				</TableRowGroup>
 

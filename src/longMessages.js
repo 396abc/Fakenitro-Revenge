@@ -1,25 +1,77 @@
 // Messages over the length limit can be turned into a message.txt attachment, like on desktop.
-// Discord's own limit is raised so it doesn't block the message with its Nitro popup,
-// then sendMessage checks the real limit and offers to attach the text as a file instead.
-// The file goes into the chat box's upload tray, so it's only sent when the user hits send.
+// Discord's limit is reported as "no limit" so it doesn't block the message with its Nitro popup,
+// except to the character counter, which still sees the real limit. sendMessage then checks the
+// real limit and offers to attach the text as a file. The file goes into the chat box's upload
+// tray, so it's only sent when the user hits send.
 import { showMessageTooLongNotice } from './alerts'
-import { addUnpatch, findProps, FluxDispatcher, logger, premiumType, Stores, storage } from './shared'
+import { addUnpatch, findPath, findProps, FluxDispatcher, logger, premiumType, Stores, storage } from './shared'
 
 const FILE_NAME = 'message.txt'
 const NO_LIMIT = 1073741824 // 2^30, effectively no limit
 const DRAFT_TYPE_CHANNEL_MESSAGE = 0
 
-let Limits
-let original
+let getRealLimit
+let inCounter = false
 
-// Nitro (premiumType 2) gets 4000, everyone else including Nitro Basic gets 2000
-const realLimit = () => (premiumType() === 2 ? 4000 : 2000)
+// Discord's own answer (4000 with Nitro, 2000 otherwise), from before we patched it
+function realLimit() {
+	try {
+		const n = getRealLimit?.()
+		if (typeof n === 'number' && n > 0 && n < NO_LIMIT) return n
+	} catch {}
+	return premiumType() === 2 ? 4000 : 2000
+}
 
-export function applyLimits() {
-	if (!Limits || !original) return
-	const raise = storage.uploadLongMessages
-	Limits.MAX_MESSAGE_LENGTH = raise ? NO_LIMIT : original.normal
-	Limits.MAX_MESSAGE_LENGTH_PREMIUM = raise ? NO_LIMIT : original.premium
+function patchLimit() {
+	const mod = findPath('modules/messages/useMessageMaxLength.tsx')
+	if (!mod?.getMaxMessageLength) throw new Error('useMessageMaxLength not found')
+
+	const { instead } = vendetta.patcher
+	const orig = mod.getMaxMessageLength
+	getRealLimit = () => orig.call(mod)
+
+	addUnpatch(
+		() => (getRealLimit = undefined),
+		instead('getMaxMessageLength', mod, function (args, fn) {
+			return storage.uploadLongMessages ? NO_LIMIT : fn.apply(this, args)
+		}),
+	)
+
+	// The hook has to run every time so React's hook order stays the same
+	if (typeof mod.default === 'function') {
+		try {
+			addUnpatch(
+				instead('default', mod, function (args, fn) {
+					const limit = fn.apply(this, args)
+					return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit
+				}),
+			)
+		} catch (e) {
+			logger.warn('[FakeNitro] could not patch useMessageMaxLength hook', e)
+		}
+	}
+
+	// Let the counter see the real limit, whether it asks the hook itself or gets it as a prop
+	const Counter = findPath('modules/chat_input/native/accessories/ChatInputCharCounter.tsx')?.default
+	const target = Counter?.type ? Counter : null
+	if (!target) return logger.warn('[FakeNitro] ChatInputCharCounter not found, counter may be hidden')
+
+	addUnpatch(
+		instead('type', target, function (args, fn) {
+			const props = args[0]
+			if (storage.uploadLongMessages && props && typeof props === 'object') {
+				const fixed = {}
+				for (const key in props) fixed[key] = props[key] === NO_LIMIT ? realLimit() : props[key]
+				args = [fixed].concat(args.slice(1))
+			}
+			inCounter = true
+			try {
+				return fn.apply(this, args)
+			} finally {
+				inCounter = false
+			}
+		}),
+	)
 }
 
 // Discord's native file module, found the same way Revenge finds it
@@ -85,15 +137,7 @@ function restoreText(channelId, content) {
 
 export function patchLongMessages({ safely }) {
 	safely('long messages', () => {
-		Limits = findProps('MAX_MESSAGE_LENGTH')
-		if (!Limits) throw new Error('MAX_MESSAGE_LENGTH not found')
-
-		original = { normal: Limits.MAX_MESSAGE_LENGTH, premium: Limits.MAX_MESSAGE_LENGTH_PREMIUM }
-		applyLimits()
-		addUnpatch(() => {
-			Limits.MAX_MESSAGE_LENGTH = original.normal
-			Limits.MAX_MESSAGE_LENGTH_PREMIUM = original.premium
-		})
+		patchLimit()
 
 		const Actions = findProps('sendMessage', 'editMessage')
 		if (!Actions) throw new Error('MessageActionCreators not found')

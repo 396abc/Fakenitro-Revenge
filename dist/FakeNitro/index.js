@@ -659,14 +659,60 @@
   var FILE_NAME = "message.txt";
   var NO_LIMIT = 1073741824;
   var DRAFT_TYPE_CHANNEL_MESSAGE = 0;
-  var Limits;
-  var original;
-  var realLimit = () => premiumType() === 2 ? 4e3 : 2e3;
-  function applyLimits() {
-    if (!Limits || !original) return;
-    const raise = storage.uploadLongMessages;
-    Limits.MAX_MESSAGE_LENGTH = raise ? NO_LIMIT : original.normal;
-    Limits.MAX_MESSAGE_LENGTH_PREMIUM = raise ? NO_LIMIT : original.premium;
+  var getRealLimit;
+  var inCounter = false;
+  function realLimit() {
+    try {
+      const n = getRealLimit == null ? void 0 : getRealLimit();
+      if (typeof n === "number" && n > 0 && n < NO_LIMIT) return n;
+    } catch (e) {
+    }
+    return premiumType() === 2 ? 4e3 : 2e3;
+  }
+  function patchLimit() {
+    var _a;
+    const mod = findPath("modules/messages/useMessageMaxLength.tsx");
+    if (!(mod == null ? void 0 : mod.getMaxMessageLength)) throw new Error("useMessageMaxLength not found");
+    const { instead: instead2 } = vendetta.patcher;
+    const orig = mod.getMaxMessageLength;
+    getRealLimit = () => orig.call(mod);
+    addUnpatch(
+      () => getRealLimit = void 0,
+      instead2("getMaxMessageLength", mod, function(args, fn) {
+        return storage.uploadLongMessages ? NO_LIMIT : fn.apply(this, args);
+      })
+    );
+    if (typeof mod.default === "function") {
+      try {
+        addUnpatch(
+          instead2("default", mod, function(args, fn) {
+            const limit = fn.apply(this, args);
+            return storage.uploadLongMessages && !inCounter ? NO_LIMIT : limit;
+          })
+        );
+      } catch (e) {
+        logger.warn("[FakeNitro] could not patch useMessageMaxLength hook", e);
+      }
+    }
+    const Counter = (_a = findPath("modules/chat_input/native/accessories/ChatInputCharCounter.tsx")) == null ? void 0 : _a.default;
+    const target = (Counter == null ? void 0 : Counter.type) ? Counter : null;
+    if (!target) return logger.warn("[FakeNitro] ChatInputCharCounter not found, counter may be hidden");
+    addUnpatch(
+      instead2("type", target, function(args, fn) {
+        const props = args[0];
+        if (storage.uploadLongMessages && props && typeof props === "object") {
+          const fixed = {};
+          for (const key in props) fixed[key] = props[key] === NO_LIMIT ? realLimit() : props[key];
+          args = [fixed].concat(args.slice(1));
+        }
+        inCounter = true;
+        try {
+          return fn.apply(this, args);
+        } finally {
+          inCounter = false;
+        }
+      })
+    );
   }
   function getFileModule() {
     var _a, _b, _c;
@@ -725,14 +771,7 @@
   }
   function patchLongMessages({ safely: safely2 }) {
     safely2("long messages", () => {
-      Limits = findProps("MAX_MESSAGE_LENGTH");
-      if (!Limits) throw new Error("MAX_MESSAGE_LENGTH not found");
-      original = { normal: Limits.MAX_MESSAGE_LENGTH, premium: Limits.MAX_MESSAGE_LENGTH_PREMIUM };
-      applyLimits();
-      addUnpatch(() => {
-        Limits.MAX_MESSAGE_LENGTH = original.normal;
-        Limits.MAX_MESSAGE_LENGTH_PREMIUM = original.premium;
-      });
+      patchLimit();
       const Actions = findProps("sendMessage", "editMessage");
       if (!Actions) throw new Error("MessageActionCreators not found");
       addUnpatch(
@@ -843,8 +882,8 @@
     const emojis = storage.transformEmojis;
     const stickers = !isReplyPreview && storage.transformStickers;
     if (!emojis && !stickers) return;
-    const original2 = message.content || [];
-    const compoundOk = storage.transformCompoundSentence || isSimpleMessage(original2);
+    const original = message.content || [];
+    const compoundOk = storage.transformCompoundSentence || isSimpleMessage(original);
     const emojiIds = /* @__PURE__ */ new Set();
     const newStickers = /* @__PURE__ */ new Map();
     const parse = (url) => {
@@ -881,7 +920,7 @@
       }
       return node;
     };
-    let content = compoundOk ? convertNodes(original2) : original2;
+    let content = compoundOk ? convertNodes(original) : original;
     let removedEmbeds = false;
     const embeds = !compoundOk ? message.embeds : (_a = message.embeds) == null ? void 0 : _a.filter((embed) => {
       var _a2, _b;
@@ -891,7 +930,7 @@
       if (link.kind === "stickers") {
         addSticker(link.id, link.name, link.extension);
       } else if (!emojiIds.has(link.id)) {
-        if (original2.length) return true;
+        if (original.length) return true;
         if (content.length) content = content.concat([{ type: "text", content: " " }]);
         content = content.concat([createEmojiNode(link)]);
         emojiIds.add(link.id);
@@ -911,7 +950,7 @@
       if (kept.length !== attachments.length) attachments = kept;
     }
     const attachmentsChanged = attachments !== message.attachments;
-    if (content === original2 && !removedEmbeds && !newStickers.size && !attachmentsChanged) return;
+    if (content === original && !removedEmbeds && !newStickers.size && !attachmentsChanged) return;
     content = trimWhitespace(content);
     if (!isReplyPreview && isJumboable(content)) {
       content = content.map((n) => Object.assign({}, n, { jumboable: true }));
@@ -1066,8 +1105,7 @@
         setting: "uploadLongMessages",
         icon: "FileIcon",
         label: "Upload long messages as files",
-        subLabel: "Instead of the Nitro popup, offer to attach messages over the limit as message.txt",
-        onChange: applyLimits
+        subLabel: "Instead of the Nitro popup, offer to attach messages over the limit as message.txt"
       }
     )), /* @__PURE__ */ React.createElement(TableRowGroup, { title: "Streaming" }, /* @__PURE__ */ React.createElement(
       Switch,
